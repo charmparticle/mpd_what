@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+import os
+import random
+from time import sleep, mktime, localtime
+from sys import argv
+import re
+import json
+from mpd import MPDClient
+import pycurl
+import musicbrainzngs
+import magic
+from io import BytesIO
+
+if __name__ == '__main__':
+################################################################################
+    #change these to suit your needs/desires.                                       #
+    coverart_dir = '~/coverart'                                                    #
+    mpd_host="localhost"
+    mpd_port="6600"
+################################################################################
+    coverart_dir = os.path.expanduser(coverart_dir)
+    global coverart
+    
+    def help_msg(me):
+        print("usage:\n" +
+              "\n{} -g to download album art".format(me) +
+              "\n{} -i to find out what's playing".format(me) +
+              "\n{} -b to do both.\n".format(me))
+    
+    def init():
+        if os.path.exists(coverart_dir):
+            pass
+        else:
+            try:
+            #python3 niceness: with exist_ok, python will go ahead an make directories
+            #recursively, without complaining that any of the dirs don't exist.
+                os.makedirs(coverart_dir, exist_ok=True)
+            except OSError as e:
+                print("There was a problem creating coverart_dir. Make sure you have the correct permissions, etc.")
+        #fi 
+        mpc = MPDClient()
+        mpc.connect(mpd_host, mpd_port)
+        state = mpc.status()['state']
+        if state == "stop":
+            exit(0)
+        #fi
+        what = mpc.currentsong()
+        mpc.close()
+        mpc.disconnect()
+        return(what)
+    
+    def prepare_query(*stuff):
+        query = '+'.join((stuff)).replace(' ',
+                        '+').replace('/',
+                        '+').replace('&',
+                        '').replace('++',
+                        '+').replace('++','+')
+        return(query)
+    
+    def get_url(url,datatype):
+        if url == 'musicbrainz':
+            data = coverart
+        else:
+            #life, uh, finds a way
+            useragents = """
+            Mozilla/5.0 (Windows NT 6.4; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/36.0.1985.143 Safari/537.36 Edge/12.0
+            Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.10240
+            Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:39.0) Gecko/20100101 Firefox/39.0
+            Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11) AppleWebKit/601.1.27 (KHTML, like Gecko) Version/8.1 Safari/601.1.27
+            Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11) AppleWebKit/601.1.32 (KHTML, like Gecko) Version/8.1 Safari/601.1.32
+            Mozilla/5.0 (Windows NT 6.3; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135
+            Mozilla/5.0 (Windows NT 10.0; WOW64; rv:48.0) Gecko/20100101 Firefox/48.0
+            Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)
+            Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36 OPR/43.0.2442.991
+            Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/603.3.8 (KHTML, like Gecko) Version/10.1.2 Safari/603.3.8
+            Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3325.181 Safari/537.36
+            """
+            useragents = useragents.splitlines()
+            useragent = random.choice(useragents)
+            buffer = BytesIO()
+            c = pycurl.Curl()
+            c.setopt(c.FOLLOWLOCATION, 1)
+            c.setopt(c.USERAGENT, useragent)
+            c.setopt(c.URL, url)
+            c.setopt(c.WRITEDATA, buffer)
+            try:
+                c.perform()
+                c.close()
+            except Exception as e:
+                print("error in geturl: " + e)
+                return False
+            data = buffer.getvalue()
+            buffer.close()
+            if datatype != '':
+                data = data.decode(datatype, errors="ignore")
+            #fi
+        return(data)
+    
+    def is_image(f):
+        ret = 'image' in magic.from_file(f, mime=True)
+        return ret
+    
+    def get_coverart(f, url):
+        try:
+            fname = '{}/{}'.format(coverart_dir,f)
+            disp = '{}/{}'.format(coverart_dir,'cover.jpg')
+            if os.path.isfile(fname) and is_image(fname):
+                if os.path.isfile(disp) and os.readlink(disp) == fname:
+                    return True
+                else:
+                    if os.path.isfile(disp):
+                        os.remove(disp)
+                    os.symlink(fname, disp)
+                    return True
+                #fi
+            else:
+                if os.path.isfile(fname):
+                    os.remove(fname)
+                if url != '':
+                    try:
+                        data = get_url(url, '')
+                        coverart = open(fname, 'wb')
+                        coverart.write(data)
+                        coverart.close()
+                        if is_image(fname):
+                            if os.path.isfile(disp):
+                                os.remove(disp)
+                            #fi
+                            os.symlink(fname, disp)
+                            return True
+                        else:
+                            return False
+                    except Exception as e:
+                        print("error getting file " + e)
+                        return False
+            #fi
+        except OSError as e:
+            print('error: ' + e)
+            #print("error in get_coverart: " + e)
+            return False
+    
+    def get_station_info(station,dl):
+        artist = ""
+        album = ""
+        song = ""
+        coverart = ""
+        try:
+            station = station.lower()
+            if station == 'source':
+                #some internet radio stations have the weirdest
+                #habits. I'm looking at you, xray.
+                mpd_info = init()
+                station = mpd_info['file']
+            if 'kexp' in station:
+                url = "https://legacy-api.kexp.org/play/?format=json&limit=1&ordering=-airdate"
+                onair = get_url(url, "utf-8")
+                if json.loads(onair)["results"][0]["playtype"]["name"] == '"Air break"':
+                    artist = "KEXP"
+                    song = "Air Break"
+                else:
+                    artist = json.loads(onair)["results"][0]["artist"]["name"]
+                    album = json.loads(onair)["results"][0]["release"]["name"]
+                    song = json.loads(onair)["results"][0]["track"]["name"]
+                #fi
+            elif 'kusf' in station:
+                url = "http://www.kusf.org/api/broadcasting"
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["Track"]["artist"].replace('"', '')
+                album = json.loads(onair)["Track"]["album"].replace('"', '')
+                song = json.loads(onair)["Track"]["title"].replace('"', '')
+                if album == " ":
+                    album = song
+                    song = ""
+                #fi
+            elif 'kcrw' in station:
+                if 'kcrw live' in station:
+                    channel = "Simulcast"
+                elif 'e24' in station:
+                    channel = "Music"
+                #fi
+                url = 'http://tracklist-api.kcrw.com/{}/all/1?page_size=1&callback=$.KCRW.refresh_tracklist'.format(channel)
+                onair = get_url(url, "utf-8")
+                #the kcrw "json" is not valid json until
+                #the first and last line are removed :-/
+                onair = '\n'.join(onair.splitlines()[1:-1])
+                artist = json.loads(onair)["artist"]
+                album = json.loads(onair)["album"]
+                song = json.loads(onair)["title"]
+                if dl:
+                    coverart_url = json.loads(onair)["albumImageLarge"]
+                    fname = '+'.join((artist,album)).replace(' ', '+')
+                    get_coverart(fname, coverart_url)
+                #fi
+            elif 'mountain chill' in station:
+                url='https://api.live365.com/v1/station/b58063'
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["current-track"]["artist"]
+                song = json.loads(onair)["current-track"]["title"].replace("';StreamURL='",'')
+            elif 'wfmu' in station:
+                url='https://wfmu.org/wp-content/themes/wfmu-theme/library/php/includes/liveNow.php'
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["artist"].replace('"', '')
+                song = json.loads(onair)["song"].replace('"', '')
+                album = json.loads(onair)["album"].replace('"', '')
+                if dl:
+                    coverart_url = json.loads(onair)["image"]["url"]
+                    fname = '+'.join((artist,album)).replace(' ', '+')
+                    get_coverart(fname, coverart_url)
+            elif 'somafm' in station:
+                if 'sonic universe' in station:
+                    url="https://somafm.com/songs/sonicuniverse.json"
+                elif 'suburbs of goa' in station:
+                    url="https://somafm.com/songs/suburbsofgoa.json"
+                elif 'digitalis' in station:
+                    url="https://somafm.com/songs/digitalis.json"
+                elif 'live' in station:
+                    url="https://somafm.com/songs/live.json"
+                elif 'underground l0s' in station:
+                    url="https://somafm.com/songs/u80s.json"
+                elif 'thistle' in station:
+                    url="https://somafm.com/songs/thistle.json"
+                elif 'fluid' in station:
+                    url="https://somafm.com/songs/fluid.json"
+                elif 'poptron' in station:
+                    url="https://somafm.com/songs/poptron.json"
+                elif 'bagel radio' in station:
+                    url="https://somafm.com/songs/bagel.json"
+                elif 'beat blender' in station:
+                    url="https://somafm.com/songs/beatblender.json"
+                elif 'groove salad' in station:
+                    url="https://somafm.com/songs/groovesalad.json"
+                elif 'indie pop rocks' in station:
+                    url="https://somafm.com/songs/indiepoprocks.json"
+                elif 'lush' in station:
+                    url="https://somafm.com/songs/lush.json"
+                elif 'boot liquor' in station:
+                    url="https://somafm.com/songs/bootliquor.json"
+                elif 'folk forward' in station:
+                    url="https://somafm.com/songs/folkfwd.json"
+                elif 'ill street' in station:
+                    url="https://somafm.com/songs/illstreet.json"
+                elif 'seven inch soul' in station:
+                    url="https://somafm.com/songs/7soul.json"
+                elif 'left coast 70s' in station:
+                    url="https://somafm.com/songs/seventies.json"
+                #fi
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)['songs'][0]['artist'].replace('"', '')
+                album = json.loads(onair)['songs'][0]['album'].replace('"', '')
+                song = json.loads(onair)['songs'][0]['title'].replace('"', '')
+            elif 'wwoz' in station:
+                epoch=mktime(localtime())
+                url="https://www.wwoz.org/api/schedule/episode/one/at/{}".format(epoch)
+                onair = get_url(url, "utf-8")
+                artist = "WWOZ"
+                album = json.loads(onair)["showhost"]["name"]
+                #if str(album) == 'None':
+                #    album=''
+                song = json.loads(onair)["title"]
+            elif 'nts live' in station:
+                url = "https://www.nts.live/api/v2/live"
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["results"][0]["now"]["broadcast_title"].replace('"', '')
+                album = "NTS"
+                if dl:
+                    coverart_url = json.loads(onair)["results"][0]["now"]["embeds"]["details"]["media"]["background_medium"].replace('"', '')
+                    fname = '+'.join((artist,album)).replace(' ', '+')
+                    get_coverart(fname, coverart_url)
+                #fi
+            elif 'kutx' in station:
+                url = "https://api.composer.nprstations.org/v1/widget/50ef24ebe1c8a1369593d032/now?format=json"
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["onNow"]["song"]["artistName"].replace('"', '')
+                album = json.loads(onair)["onNow"]["song"]["collectionName"].replace('"', '')
+                song = json.loads(onair)["onNow"]["song"]["trackName"].replace('"', '')
+                if artist == album == song == null:
+                    album = json.loads(onair)["onNow"]["program"]["name"].replace('"',
+                                                                          '')
+                if dl:
+                    coverart_url = json.loads(onair)["onNow"]["song"]["artworkUrl100"].replace('"', '').replace('100x100', '300x300')
+                    fname = '+'.join((artist,album)).replace(' ', '+')
+                    get_coverart(fname, coverart_url)
+                #fi
+            elif 'xray' in station:
+                url="https://xray.fm/api/tracks/current"
+                onair = get_url(url, "utf-8")
+                artist = json.loads(onair)["artist"]
+                album = json.loads(onair)["album"]
+                song = json.loads(onair)["title"]
+                #if dl:
+                #    coverart_url = json.loads(onair)["now"]["Image"]["url_md"].replace('"', '')
+                #    fname = '+'.join((artist,album)).replace(' ', '+')
+                #    get_coverart(fname, coverart_url)
+                #fi
+            else:
+                #most internet radios show the artist and album as
+                #artist - album in mpd, so this is a "best guess" for any
+                #station I haven't gotten the stream for.
+                mpdinfo = init()
+                if 'title' in mpdinfo:
+                    info = mpdinfo['title'].split(' - ')
+                    if len(info) == 1:
+                        (artist)=info[0]
+                    elif len(info) == 2:
+                        (artist,album) = info
+                    elif len(info) == 3:
+                        (artist,album,song) = info
+
+            #fi
+        except KeyError:
+            pass
+        return(artist, album, song)
+    
+    def get_coverart_info(data): 
+        try:
+            query = prepare_query(data.splitlines()[0],
+                         data.splitlines()[1])
+        except:
+            try:
+                get_coverart("generic_lp_icon.jpg", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png")
+                exit()
+                #print('cannot retrieve artwork from discogs.')
+            except OSError as e:
+                print("OS error in get_coverart_info: " + e)
+                exit()
+        try:
+            musicbrainzngs.set_useragent('mpd_what', 1)
+            query2 = query.replace('+', ' ')
+            release = musicbrainzngs.search_release_groups(query2)
+            releaseid = release['release-group-list'][0]['id']
+            #print(releaseid)
+            coverart = musicbrainzngs.get_release_group_image_front(releaseid, size=250)
+            #print(coverart)
+            if coverart != "":
+                get_coverart(query + '.jpg', 'musicbrainz')
+            else:
+                raise Exception('musicbrainz search failed')
+        except Exception as e:
+
+            fname = '{}/{}'.format(coverart_dir,query)
+            #I don't want to hit discogs if I don't need to.
+            try:
+                if os.path.isfile(fname + '.jpg'):
+                    #get_coverart links the file if it's already been dled.
+                    get_coverart(query + '.jpg', '')
+                else:
+                    query2 = prepare_query(data.splitlines()[0])
+                    fname = '{}/{}'.format(coverart_dir,query2)
+                    if os.path.isfile(fname + '.jpg'):
+                        get_coverart(query2 + '.jpg', '')
+                    else:
+                        #Forcing a pause so discogs doesn't kick me out.
+                        sleep(5)
+                        discogs_url = 'https://www.discogs.com/?q={}'.format(query)
+                        html = get_url(discogs_url, 'utf-8')
+                        try:
+                            coverart_url = re.findall('http.*?\.jpg', html)[0]
+                            if get_coverart(query + '.jpg', coverart_url):
+                                return True
+                            else:
+                                query = prepare_query((data.splitlines()[0]))
+                                discogs_url = 'https://www.discogs.com/?q={}'.format(query)
+                                html = get_url(discogs_url, 'utf-8')
+                                coverart_url = re.findall('http.*?\.jpg', html)[0]
+                                sleep(5)
+                                get_coverart(query + '.jpg', coverart_url)
+                        except IndexError:
+                            try:
+                                get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
+                                #print('cannot retrieve artwork from discogs.')
+                            except:
+                                pass
+                #fi
+            except:
+                try:
+                    get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
+                    #print('cannot retrieve artwork from discogs.')
+                except:
+                    return False
+    
+    def get_mpd_info(dl):
+        mpdinfo = init()
+    
+        #I prefer albumartist
+        if 'albumartist' in mpdinfo:
+            artist = mpdinfo['albumartist']
+        elif 'artist' in mpdinfo:
+            artist = mpdinfo['artist']
+        elif 'name' in mpdinfo:
+            station = mpdinfo['name']
+            whatsplaying = get_station_info(station,dl)
+            artist = whatsplaying[0]
+        elif 'file' in mpdinfo:
+            whatsplaying = mpdinfo['file'].split('/')
+            artist = whatsplaying[0]
+            album = whatsplaying[1]
+            song = whatsplaying[2]
+        #fi
+        #The , '' means, if album isn't there, use null instead of erroring out.
+        if 'whatsplaying' in vars():
+            pass
+        else:
+            album = mpdinfo.get('album', '')
+            song = mpdinfo.get('title', '')
+    
+            whatsplaying = (artist, album, song)
+        #fi
+        #bit on python arcana: .strip() returns false for an empty string. Sort of
+        #like taking a bald, beardless guy to the barber shop.
+        #need to make sure the string length is more than 1, or else, I get
+        #a bunch of chars separated by newlines
+        #whatsplaying = [s for s in whatsplaying if not type(s) is not None]
+        whatsplaying = [s for s in whatsplaying if s != None and s != '']
+        nonblank = [s for s in whatsplaying if (s.strip() and len(s) > 1)]
+        if len(nonblank) <= 3:
+            whatsplaying = '\n'.join((nonblank)).strip()
+        else:
+            whatsplaying = whatsplaying[0]
+    
+        if dl:
+            get_coverart_info(whatsplaying)
+        else:
+            print(whatsplaying)
+        #fi
+    
+    if len(argv) > 1:
+        if argv[1] == '-g':
+            get_mpd_info(True)
+        elif argv[1] == '-i':
+            get_mpd_info(False)
+        elif argv[1] == '-b':
+            get_mpd_info(False)
+            get_mpd_info(True)
+        else:
+            help_msg(argv[0])
+        #fi
+    else:
+        help_msg(argv[0])
+    #fi
