@@ -7,7 +7,7 @@ Getting started:
 
     pip3 install python-mpd2 pycurl musicbrainzngs python-magic
     
- * edit mpd_what to set the coverart_dir, mpd_host, and mpd_port to whatever you prefer (otherwise, it defaults to ~/coverart, localhost, and 6600, respectively)
+edit mpd_what to set the coverart_dir, mpd_host, and mpd_port to whatever you prefer (otherwise, it defaults to ~/coverart, localhost, and 6600, respectively), then
     
     ./mpd_what -b
 
