@@ -14,7 +14,7 @@ from io import BytesIO
 if __name__ == '__main__':
 ################################################################################
     #change these to suit your needs/desires.                                       #
-    coverart_dir = '~/coverart'                                                    #
+    coverart_dir = '/var/www/html/coverart'                                                    #
     mpd_host="localhost"
     mpd_port="6600"
 ################################################################################
@@ -38,12 +38,15 @@ if __name__ == '__main__':
             except OSError as e:
                 print("There was a problem creating coverart_dir. Make sure you have the correct permissions, etc.")
         #fi 
+
         mpc = MPDClient()
         mpc.connect(mpd_host, mpd_port)
         state = mpc.status()['state']
+
         if state == "stop":
             exit(0)
         #fi
+
         what = mpc.currentsong()
         mpc.close()
         mpc.disconnect()
@@ -215,7 +218,7 @@ if __name__ == '__main__':
                     url="https://somafm.com/songs/digitalis.json"
                 elif 'live' in station:
                     url="https://somafm.com/songs/live.json"
-                elif 'underground l0s' in station:
+                elif 'underground eighties' in station:
                     url="https://somafm.com/songs/u80s.json"
                 elif 'thistle' in station:
                     url="https://somafm.com/songs/thistle.json"
@@ -305,7 +308,6 @@ if __name__ == '__main__':
                         (artist,album) = info
                     elif len(info) == 3:
                         (artist,album,song) = info
-
             #fi
         except KeyError:
             pass
@@ -319,7 +321,7 @@ if __name__ == '__main__':
             try:
                 get_coverart("generic_lp_icon.jpg", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png")
                 exit()
-                #print('cannot retrieve artwork from discogs.')
+                print('cannot retrieve artwork from discogs.')
             except OSError as e:
                 print("OS error in get_coverart_info: " + e)
                 exit()
@@ -402,13 +404,12 @@ if __name__ == '__main__':
         else:
             album = mpdinfo.get('album', '')
             song = mpdinfo.get('title', '')
-    
             whatsplaying = (artist, album, song)
         #fi
         #bit on python arcana: .strip() returns false for an empty string. Sort of
         #like taking a bald, beardless guy to the barber shop.
         #need to make sure the string length is more than 1, or else, I get
-        #a bunch of chars separated by newlines
+        #a bunch of chars each separated by newlines
         #whatsplaying = [s for s in whatsplaying if not type(s) is not None]
         whatsplaying = [s for s in whatsplaying if s != None and s != '']
         nonblank = [s for s in whatsplaying if (s.strip() and len(s) > 1)]
