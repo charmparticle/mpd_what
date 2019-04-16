@@ -1,7 +1,7 @@
 # mpd_what
 An mpd album art and info getter
 
-mpd_what is a python script to grab album art and find out what is playing. In addition to finding art and info for what you're playing locally, it also will try to find art and info for internet radio stations you might be playing. Since every internet radio station is unique in its configuration, this script doesn't work with all of them, and maybe it never will, but it tries to do the best it can.
+mpd_what is a python script to grab album art and find out what is playing. In addition to finding art and info for what you're playing locally, it also will try to find art and info for internet radio stations you might be playing. I'm not aware of any other mpd album art getters that do this. Since every internet radio station is unique in its configuration, this script doesn't work with all of them, and probably it never will, but it tries to do the best it can.
 
 Getting started:
 
