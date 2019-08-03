@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import yaml
 import random
 from time import sleep, mktime, localtime
 from sys import argv
@@ -14,11 +15,21 @@ from io import BytesIO
 if __name__ == '__main__':
 ################################################################################
     #change these to suit your needs/desires.                                       #
-    coverart_dir = '/var/www/html/coverart'                                                    #
+    config = '~/.config/mpd_what/config.yml'
+# if coverart_dir, mpd_host, and mpd_port are set in the config, the config
+# values supercede the following:
+    coverart_dir = '~/Pictures/coverart'                                                    #
     mpd_host="localhost"
     mpd_port="6600"
 ################################################################################
+    config = os.path.expanduser(config)
     coverart_dir = os.path.expanduser(coverart_dir)
+    if os.path.exists(config):
+        with open(config, 'r') as ymlfile:
+            cfg = yaml.load(ymlfile)
+            mpd_host = cfg['mpd_host']
+            mpd_port = cfg['mpd_port']
+            coverart_dir = cfg['coverart_dir']
     global coverart
     
     def help_msg(me):
