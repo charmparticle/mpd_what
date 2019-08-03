@@ -57,7 +57,8 @@ if __name__ == '__main__':
                         '+').replace('/',
                         '+').replace('&',
                         '').replace('++',
-                        '+').replace('++','+')
+                        '+').replace('++',
+                        '+').replace('ö', 'o')
         return(query)
     
     def get_url(url,datatype):
@@ -157,11 +158,11 @@ if __name__ == '__main__':
             if 'kexp' in station:
                 url = "https://legacy-api.kexp.org/play/?format=json&limit=1&ordering=-airdate"
                 onair = get_url(url, "utf-8")
-                if str(str(json.loads(onair)["results"][0]["playtype"]["name"])) == '"Air break"':
+                if str(json.loads(onair)["results"][0]["playtype"]["name"]) == '"Air break"':
                     artist = "KEXP"
                     song = "Air Break"
                 else:
-                    artist = str(str(json.loads(onair)["results"][0]["artist"]["name"]))
+                    artist = str(json.loads(onair)["results"][0]["artist"]["name"])
                     album = str(json.loads(onair)["results"][0]["release"]["name"])
                     song = str(json.loads(onair)["results"][0]["track"]["name"])
                 #fi
