@@ -13,7 +13,7 @@ Next, create a config.yml in `~/.config/mpd_what` with the following:
     mpd_port: 6600
     coverart_dir: /tmp/mpd_what/coverart
     
-and optionally:
+replacing /tmp/mpd_what/coverart with your preferred coverart area (I like hosting my coverarts on my webserver) and optionally:
 
     lastfm_user: <your lastfm username>
     lastfm_pass: <your lastfm password>
