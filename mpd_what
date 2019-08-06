@@ -49,6 +49,8 @@ if __name__ == '__main__':
                 lastfm_pass = cfg['lastfm_pass']
                 lastfm_api_key = cfg['lastfm_api_key']
                 lastfm_api_secret = cfg['lastfm_api_secret']
+                librefm_user = cfg['librefm_user']
+                librefm_pass = cfg['librefm_pass']
             except KeyError:
                 pass
     else:
@@ -473,13 +475,19 @@ if __name__ == '__main__':
                     try:
                         lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
                                                       api_secret=lastfm_api_secret,
-                                                      username=lastfm_username,
-                                                      password_hash=pylast.md5(lastfm_password))
+                                                      username=lastfm_user,
+                                                      password_hash=pylast.md5(lastfm_pass))
+                        librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
+                                                      api_secret=lastfm_api_secret,
+                                                      username=librefm_user,
+                                                      password_hash=pylast.md5(librefm_pass))
                         if album != "":
                             lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
+                            librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
                         else:
                             lastfm.scrobble(artist=artist, title=title, timestamp=epoch) 
-                    except pylast.WSError as e:
+                            librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
+                    except Exception as e:
                         print(str(e))
     
         if dl:
