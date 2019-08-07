@@ -7,8 +7,45 @@ Getting started:
 
     pip3 install python-mpd2 pycurl musicbrainzngs python-magic
     
-edit mpd_what to set the coverart_dir, mpd_host, and mpd_port to whatever you prefer (otherwise, it defaults to ~/coverart, localhost, and 6600, respectively), then
+Next, create a config.yml in `~/.config/mpd_what` with the following:
+
+    mpd_host: localhost
+    mpd_port: 6600
+    coverart_dir: /tmp/mpd_what/coverart
+    
+replacing /tmp/mpd_what/coverart with your preferred coverart area (I like hosting my coverarts on my webserver) and optionally:
+
+    lastfm_user: <your lastfm username>
+    lastfm_pass: <your lastfm password>
+    lastfm_api_key: <your lastfm api key, which you can get at https://www.last.fm/api/account/create>
+    lastfm_api_secret: <your lastfm shared secret, same as above>
+    librefm_user: <your librefm username>
+    librefm_pass: <your librefm password>
+    
+ If you choose librefm, but not lastfm, then add lastfm_api_key and lastfm_api_secret, and set them to some random 32-character strings. You can get some random strings by installing pwgen, and invoking it like so:
+ 
+     pwgen 32 2 -1
+     
+Next, execute
     
     ./mpd_what -b
 
-You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` to reload cover.jpg when it changes.
+You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` to reload cover.jpg when it changes. Even better, you can have conky automatically call mpd_what to give you album art and info. Here are the pertinent lines in my own .conkyrc:
+
+    ${color white}NOW PLAYING:
+    ${execi 20 ~/bin/mpd_what -g}${image /var/www/html/coverart/cover.jpg -s 200x200 -p 25,123 -f 3}
+
+
+
+
+
+
+
+
+
+
+
+
+    ${execi 2 ~/bin/mpd_what -i | sed 's/^/   /g'}${if_match "${mpd_artist}" != ""}
+        ${color}${mpd_bar 3,200}${endif}${endif}
+
