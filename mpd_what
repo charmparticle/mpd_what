@@ -463,8 +463,8 @@ if __name__ == '__main__':
                 last = lastfile.readlines()
                 last = ''.join(last).strip()
 
-        if (infostr != last) and lastfm and scrobble:
-            if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and (len(whatsplaying) >= 2):
+        if (infostr != last):
+            if (len(whatsplaying) >= 2):
                 if (len(whatsplaying) == 3):
                     artist = whatsplaying[0]
                     album = whatsplaying[1]
@@ -473,27 +473,29 @@ if __name__ == '__main__':
                     artist = whatsplaying[0]
                     album = ""
                     track = whatsplaying[1]
-
                 with open(lastplayed, 'w+') as lastfile:
                     lastfile.write(infostr)
-                epoch = time()
-                try:
-                    lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
-                                                  api_secret=lastfm_api_secret,
-                                                  username=lastfm_user,
-                                                  password_hash=pylast.md5(lastfm_pass))
-                    librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
-                                                  api_secret=lastfm_api_secret,
-                                                  username=librefm_user,
-                                                  password_hash=pylast.md5(librefm_pass))
-                    if album != "":
-                        lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
-                        librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
-                    else:
-                        lastfm.scrobble(artist=artist, title=title, timestamp=epoch) 
-                        librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
-                except Exception as e:
-                    print(str(e))
+
+                if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and scrobble and lastfm:
+
+                    epoch = time()
+                    try:
+                        lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
+                                                      api_secret=lastfm_api_secret,
+                                                      username=lastfm_user,
+                                                      password_hash=pylast.md5(lastfm_pass))
+                        librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
+                                                      api_secret=lastfm_api_secret,
+                                                      username=librefm_user,
+                                                      password_hash=pylast.md5(librefm_pass))
+                        if album != "":
+                            lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
+                            librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
+                        else:
+                            lastfm.scrobble(artist=artist, title=title, timestamp=epoch) 
+                            librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
+                    except Exception as e:
+                        print(str(e))
     
         if dl:
             get_coverart_info(whatsplaying)
