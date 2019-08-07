@@ -12,7 +12,6 @@ import pycurl
 import musicbrainzngs
 import magic
 from io import BytesIO
-global lastfm
 try:
     import pylast
     lastfm = True
@@ -33,6 +32,8 @@ if __name__ == '__main__':
     lastfm_pass = ""
     lastfm_api_key = ""
     lastfm_api_secret = ""
+    dl=False
+    scrobble=False
 ################################################################################
     config_dir = os.path.expanduser(config_dir)
     coverart_dir = os.path.expanduser(coverart_dir)
@@ -63,7 +64,7 @@ if __name__ == '__main__':
               "\n{} -g to download album art".format(me) +
               "\n{} -i to find out what's playing".format(me) +
               "\n{} -b to do both.\n".format(me))
-    
+
     def init():
         if os.path.exists(coverart_dir):
             pass
@@ -422,7 +423,8 @@ if __name__ == '__main__':
                 except:
                     return False
     
-    def get_mpd_info(dl):
+    def get_mpd_info():
+        global dl
         mpdinfo = init()
     
         #I prefer albumartist
@@ -471,7 +473,7 @@ if __name__ == '__main__':
                     lastfile.write(infostr)
                 epoch = time()
                 global lastfm
-                if lastfm:
+                if lastfm and scrobble:
                     try:
                         lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
                                                       api_secret=lastfm_api_secret,
@@ -495,18 +497,33 @@ if __name__ == '__main__':
         else:
             print(infostr)
         #fi
+
+    def verify_args(a, gs):
+        a = [s.lower() for s in a]
+        #now we see if the user entered invalid args
+        if len(a) > 1:
+            for arg in a[1:]:
+                if arg in gs:
+                    pass
+                else:
+                    show_help()
     
-    if len(argv) > 1:
-        if argv[1] == '-g':
-            get_mpd_info(True)
-        elif argv[1] == '-i':
-            get_mpd_info(False)
-        elif argv[1] == '-b':
-            get_mpd_info(False)
-            get_mpd_info(True)
-        else:
-            help_msg(argv[0])
-        #fi
-    else:
-        help_msg(argv[0])
-    #fi
+    def parse_args(a):
+        valid_singles = ['-g', '--get', '-b', '-i', '--info',  '-sc', '--scrobble', '-h', '--help']
+        verify_args(a, valid_singles)
+        global dl, scrobble
+        if '-h' in a[1:] or '--help' in a[1:]:
+            help_msg(a[0])
+        if '-g' in a[1:] or '--get' in a[1:] :
+            dl=True
+        if '-i' in a[1:] or '--info' in a[1:]:
+            dl=False
+        if '-b' in a[1:]:
+            dl=True
+            get_mpd_info()
+            dl=False
+        if '-sc' in a[1:] or '--scrobble' in a[1:]:
+            scrobble=True
+    
+parse_args(argv)
+get_mpd_info()
