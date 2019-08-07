@@ -61,9 +61,12 @@ if __name__ == '__main__':
     
     def help_msg(me):
         print("usage:\n" +
-              "\n{} -g to download album art".format(me) +
-              "\n{} -i to find out what's playing".format(me) +
-              "\n{} -b to do both.\n".format(me))
+              "\n{} -sc  or --scrobble to try to scrobble music to last.fm or libre.fm".format(me) +
+              "\n{} -g  or --get to download album art".format(me) +
+              "\n{} -i or --info to find out what's playing (this is the default)".format(me) +
+              "\n{} -b to do both.\n".format(me) +
+              "\narguments can be composed, eg:" +
+              "\n\n{} -sc -g".format(me))
 
     def init():
         if os.path.exists(coverart_dir):
@@ -514,6 +517,7 @@ if __name__ == '__main__':
         global dl, scrobble
         if '-h' in a[1:] or '--help' in a[1:]:
             help_msg(a[0])
+            exit(0)
         if '-g' in a[1:] or '--get' in a[1:] :
             dl=True
         if '-i' in a[1:] or '--info' in a[1:]:
