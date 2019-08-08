@@ -33,7 +33,11 @@ replacing /tmp/mpd_what/coverart with your preferred coverart area (I like hosti
      
 Next, execute
     
-    ./mpd_what -b
+    ./mpd_what -g
+
+You can find the available options with
+
+    ./mpd_what -h
 
 You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` to reload cover.jpg when it changes. Even better, you can have conky automatically call mpd_what to give you album art and info. Here are the pertinent lines in my own .conkyrc:
 
