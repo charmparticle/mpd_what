@@ -44,7 +44,7 @@ You can find the available options with
 You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` to reload cover.jpg when it changes. Even better, you can have conky automatically call mpd_what to give you album art and info. Here are the pertinent lines in my own .conkyrc:
 
     ${color white}NOW PLAYING:
-    ${execi 20 ~/bin/mpd_what -g}${image /var/www/html/coverart/cover.jpg -s 200x200 -p 25,123 -f 3}
+    ${image /var/www/html/coverart/cover.jpg -s 200x200 -p 25,123 -f 3}
 
 
 
@@ -57,6 +57,6 @@ You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` t
 
 
 
-    ${execi 2 ~/bin/mpd_what -i | sed 's/^/   /g'}${if_match "${mpd_artist}" != ""}
+    ${execi 2 ~/bin/mpd_what -g -sc | sed 's/^/   /g'}${if_match "${mpd_artist}" != ""}
         ${color}${mpd_bar 3,200}${endif}${endif}
 
