@@ -3,9 +3,14 @@ An mpd album art and info getter
 
 mpd_what is a python script to grab album art and find out what is playing. In addition to finding art and info for what you're playing locally, it also will try to find art and info for internet radio stations you might be playing. I'm not aware of any other mpd album art getters that do this. Since every internet radio station is unique in its configuration, this script doesn't work with all of them, and probably it never will, but it tries to do the best it can.
 
+As of August 2019, mpd_what can scrobble your music to last.fm or libre.fm (or both!). Huzzah! Now last.fm can dig all those cool grooves I've been playing from somafm's streams.
+
+
 Getting started:
 
-    pip3 install python-mpd2 pycurl musicbrainzngs python-magic
+    pip3 install python-mpd2 pycurl musicbrainzngs python-magic pylast
+    
+pylast is optional, but you can't scrobble without it.
     
 Next, create a config.yml in `~/.config/mpd_what` with the following:
 
