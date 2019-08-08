@@ -32,6 +32,7 @@ if __name__ == '__main__':
     lastfm_pass = ""
     lastfm_api_key = ""
     lastfm_api_secret = ""
+    showinfo=True
     dl=False
     scrobble=False
 ################################################################################
@@ -63,10 +64,9 @@ if __name__ == '__main__':
         print("usage:\n" +
               "\n{} -sc  or --scrobble to try to scrobble music to last.fm or libre.fm".format(me) +
               "\n{} -g  or --get to download album art".format(me) +
-              "\n{} -i or --info to find out what's playing (this is the default)".format(me) +
-              "\n{} -b to do both.\n".format(me) +
+              "\n{} -q  or --quiet to not print info".format(me) +
               "\narguments can be composed, eg:" +
-              "\n\n{} -sc -g".format(me))
+              "\n\n{} -sc -g -q".format(me))
 
     def init():
         if os.path.exists(coverart_dir):
@@ -427,6 +427,7 @@ if __name__ == '__main__':
                     return False
     
     def get_mpd_info():
+        global showinfo
         global dl
         global scrobble
         global lastfm
@@ -464,6 +465,8 @@ if __name__ == '__main__':
                 last = ''.join(last).strip()
 
         if (infostr != last):
+            if dl:
+                get_coverart_info(whatsplaying)
             if (len(whatsplaying) >= 2):
                 if (len(whatsplaying) == 3):
                     artist = whatsplaying[0]
@@ -496,10 +499,8 @@ if __name__ == '__main__':
                             librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
                     except Exception as e:
                         print(str(e))
-    
-        if dl:
-            get_coverart_info(whatsplaying)
-        else:
+
+        if showinfo: 
             print(infostr)
         #fi
 
@@ -514,20 +515,16 @@ if __name__ == '__main__':
                     show_help()
     
     def parse_args(a):
-        valid_singles = ['-g', '--get', '-b', '-i', '--info',  '-sc', '--scrobble', '-h', '--help']
+        valid_singles = ['-g', '--get',  '-sc', '--scrobble', '-h', '--help', '-q', '--quiet']
         verify_args(a, valid_singles)
-        global dl, scrobble
+        global dl, scrobble, showinfo
         if '-h' in a[1:] or '--help' in a[1:]:
             help_msg(a[0])
             exit(0)
         if '-g' in a[1:] or '--get' in a[1:] :
             dl=True
-        if '-i' in a[1:] or '--info' in a[1:]:
-            dl=False
-        if '-b' in a[1:]:
-            dl=True
-            get_mpd_info()
-            dl=False
+        if '-q' in a[1:] or '--quiet' in a[1:]:
+            showinfo=False
         if '-sc' in a[1:] or '--scrobble' in a[1:]:
             scrobble=True
     
