@@ -92,14 +92,13 @@ if __name__ == '__main__':
         mpc.close()
         mpc.disconnect()
         return(what)
-    
+
     def prepare_query(*stuff):
         query = '+'.join((stuff)).replace(' ',
                         '+').replace('/',
                         '+').replace('&',
                         '').replace('++',
-                        '+').replace('++',
-                        '+').replace('ö', 'o')
+                        '+').replace('++', '+')
         return(query)
     
     def get_url(url,datatype):
@@ -512,7 +511,7 @@ if __name__ == '__main__':
                 if arg in gs:
                     pass
                 else:
-                    show_help()
+                    help_msg(a[0])
     
     def parse_args(a):
         valid_singles = ['-g', '--get',  '-sc', '--scrobble', '-h', '--help', '-q', '--quiet']
