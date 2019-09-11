@@ -512,6 +512,7 @@ if __name__ == '__main__':
                     pass
                 else:
                     help_msg(a[0])
+                    exit(0)
     
     def parse_args(a):
         valid_singles = ['-g', '--get',  '-sc', '--scrobble', '-h', '--help', '-q', '--quiet']
