@@ -3,7 +3,7 @@ import os
 import yaml
 import difflib
 import random
-from time import time, sleep, mktime, localtime
+from time import time, ctime, sleep, mktime, localtime
 from sys import argv
 import re
 import json
@@ -26,6 +26,8 @@ if __name__ == '__main__':
 # values supercede the following:
     coverart_dir = '~/Pictures/coverart'                                                    #
     lastplayed = '{}/{}'.format(config_dir, 'last')
+    playlist = '{}/{}'.format(config_dir, 'playlist.txt')
+    errlog = '{}/{}'.format(config_dir, 'log')
     mpd_host="localhost"
     mpd_port="6600"
     lastfm_user = ""
@@ -36,9 +38,13 @@ if __name__ == '__main__':
     dl=False
     scrobble=False
 ################################################################################
+# This part is necessary for python to understand what '~' means.
     config_dir = os.path.expanduser(config_dir)
     coverart_dir = os.path.expanduser(coverart_dir)
     lastplayed = os.path.expanduser(lastplayed)
+    playlist = os.path.expanduser(playlist)
+    errlog = os.path.expanduser(errlog)
+################################################################################
     config = '{}/{}'.format(config_dir, 'config.yml')
     if os.path.exists(config):
         with open(config, 'r') as ymlfile:
@@ -441,7 +447,7 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                     exit()
         try:
 
-            musicbrainzngs.set_useragent('mpd_what_osheek7Vee', 1)
+            musicbrainzngs.set_useragent('mpd_what_osxes7Vee', 1)
             query2 = query.replace('+', ' ')
             release = musicbrainzngs.search_release_groups(query2)
             releaseid = release['release-group-list'][0]['id']
@@ -529,9 +535,16 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
             song = mpdinfo.get('title', '')
             whatsplaying = [artist, album, song]
 
+        #why is this needed? because whatsplaying, which should be
+        #a list of strings, might contain an empty string as one of its
+        #entries, and that messes up the logic.
+        if isinstance(whatsplaying, list):
+            whatsplaying = [s for s in whatsplaying if s != '']
+
         infostr = '\n'.join(whatsplaying).strip()
 
         last = ""
+
         if os.path.exists(lastplayed):
             with open(lastplayed, 'r') as lastfile:
                 last = lastfile.readlines()
@@ -545,33 +558,45 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                     artist = whatsplaying[0]
                     album = whatsplaying[1]
                     title = whatsplaying[2]
-                else:
+                    print(whatsplaying)
+                elif (len(whatsplaying) == 2):
                     artist = whatsplaying[0]
                     album = ""
-                    track = whatsplaying[1]
-                with open(lastplayed, 'w+') as lastfile:
-                    lastfile.write(infostr)
+                    title = whatsplaying[1]
 
-                if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and scrobble and lastfm:
+                if (title != "stream1.early1900s.org:8080"):
+                    with open(lastplayed, 'w+') as lastfile:
+                        lastfile.write(infostr)
 
-                    epoch = time()
-                    try:
-                        lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
-                                                      api_secret=lastfm_api_secret,
-                                                      username=lastfm_user,
-                                                      password_hash=pylast.md5(lastfm_pass))
-                        librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
-                                                      api_secret=lastfm_api_secret,
-                                                      username=librefm_user,
-                                                      password_hash=pylast.md5(librefm_pass))
-                        if album != "":
-                            lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
-                            librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
-                        else:
-                            lastfm.scrobble(artist=artist, title=title, timestamp=epoch) 
-                            librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
-                    except Exception as e:
-                        print(str(e))
+                    oneline_infostr = infostr.replace('\n', ';')
+
+                    with open(playlist, 'a') as p:
+                        p.write(oneline_infostr + '\n')
+
+                    if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and scrobble and lastfm:
+
+                        epoch = time()
+                        when = ctime(epoch)
+                        try:
+                            lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
+                                                          api_secret=lastfm_api_secret,
+                                                          username=lastfm_user,
+                                                          password_hash=pylast.md5(lastfm_pass))
+                            librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
+                                                          api_secret=lastfm_api_secret,
+                                                          username=librefm_user,
+                                                          password_hash=pylast.md5(librefm_pass))
+                            if album == "":
+                                lastfm.scrobble(artist=artist, title=title, timestamp=epoch) 
+                                librefm.scrobble(artist=artist, title=title, timestamp=epoch) 
+                            else:
+                                lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
+                                librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch) 
+
+                        except Exception as e:
+                            with open (errlog, 'a') as logfile:
+                                logfile.write(str(when) + ': ' + str(e) + '\n')
+                        
 
         if showinfo: 
             print(infostr)
