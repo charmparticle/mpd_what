@@ -11,6 +11,8 @@ from mpd import MPDClient
 import pycurl
 import musicbrainzngs
 import magic
+import unicodedata
+
 from io import BytesIO
 try:
     import pylast
@@ -20,7 +22,7 @@ except ImportError:
 
 if __name__ == '__main__':
 ################################################################################
-    #change these to suit your needs/desires.                                       #
+# use your config file to change these
     config_dir = '~/.config/mpd_what'
 # if coverart_dir, mpd_host, and mpd_port are set in the config, the config
 # values supercede the following:
@@ -99,12 +101,21 @@ if __name__ == '__main__':
         mpc.disconnect()
         return(what)
 
+    def remove_accents(input_str):
+        nfkd_form = unicodedata.normalize('NFKD', input_str)
+        only_ascii = nfkd_form.encode('ASCII', 'ignore')
+        return only_ascii
+
     def prepare_query(*stuff):
         query = '+'.join((stuff)).replace(' ',
                         '+').replace('/',
                         '+').replace('&',
                         '').replace('++',
-                        '+').replace('++', '+')
+                        '+').replace('++',
+                        '+')
+        query.encode('utf-8')
+        query = remove_accents(query)
+        query = query.decode()
         return(query)
     
     def get_url(url,datatype):
@@ -236,6 +247,7 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                     return True
                 #fi
             else:
+                #somehow this coverart file isn't an image.
                 if os.path.isfile(fname):
                     os.remove(fname)
                 if url != '':
@@ -253,12 +265,11 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                         else:
                             return False
                     except Exception as e:
-                        print("error getting file " + e)
+                        print("error getting file " + str(e))
                         return False
             #fi
         except OSError as e:
-            print('error: ' + e)
-            #print("error in get_coverart: " + e)
+            print("error in get_coverart: " + str(e))
             return False
     
     def get_station_info(station,dl):
@@ -441,10 +452,11 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                 try:
                     get_coverart("generic_lp_icon.jpg", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png")
                     exit()
-                    print('cannot retrieve artwork from discogs.')
+                    print('prepare query failed')
                 except OSError as e:
                     print("OS error in get_coverart_info: " + e)
                     exit()
+
         try:
 
             musicbrainzngs.set_useragent('mpd_what_osxes7Vee', 1)
@@ -458,7 +470,7 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                 get_coverart(query + '.jpg', 'musicbrainz')
             else:
                 raise Exception('musicbrainz search failed')
-        except Exception as e:
+        except Exception:
 
             #time to fall back on discogs; they have a nice big library of
             #obscure indie stuff.
@@ -469,35 +481,46 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                     #get_coverart links the file if it's already been dled.
                     get_coverart(query + '.jpg', '')
                 else:
-                    query2 = prepare_query(data[0],data[1])
-                    fname = '{}/{}'.format(coverart_dir,query2)
+                    #query2 = prepare_query(data[0],data[1])
+                    #fname = '{}/{}'.format(coverart_dir,query2)
+                    #fname = '{}/{}'.format(coverart_dir,query)
                     if os.path.isfile(fname + '.jpg'):
-                        get_coverart(query2 + '.jpg', '')
+                        get_coverart(query + '.jpg', '')
                     else:
                         #Forcing a pause so discogs doesn't kick me out.
                         sleep(5)
                         discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
                         html = get_url(discogs_url, 'utf-8')
-                        try:
-                            coverart_url = re.findall('http[^"]*.jpg', html)[0]
-                            if get_coverart(query + '.jpg', coverart_url):
-                                return True
-                            else:
-                                query = prepare_query(data[0])
-                                discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
-                                html = get_url(discogs_url, 'utf-8')
-                                coverart_url = re.findall('http[^"]*.jpg', html)[0]
-                                sleep(5)
+                        #try:
+                        coverart_url = re.findall('http[^"]*.jpg', html)
+                        if len(coverart_url) > 0:
+                            coverart_url = coverart_url[0]
+                            get_coverart(query + '.jpg', coverart_url)
+                        else:
+                            query = prepare_query(data[0])
+                            discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
+                            html = get_url(discogs_url, 'utf-8')
+                            coverart_url = re.findall('http[^"]*.jpg', html)
+                            if len(coverart_url) > 0:
+                                coverart_url = coverart_url[0]
                                 get_coverart(query + '.jpg', coverart_url)
-                        except IndexError:
-                            try:
+                                sleep(5)
+                            else:
+                                print(query)
+                                print('index error searching discogs')
                                 get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
-                                #print('cannot retrieve artwork from discogs.')
-                            except:
-                                pass
+                        #except IndexError:
+                        #    try:
+                        #        print(query)
+                        #        print('index error searching discogs')
+                        #        get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
+                        #    except:
+                        #        pass
                 #fi
-            except:
+            except Exception as e:
                 #no album art found :-(
+                print(query)
+                print(str(e))
                 try:
                     get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
                     #print('cannot retrieve artwork from discogs.')
@@ -564,7 +587,7 @@ Mozilla/5.0 (Windows NT 6.3; Win64; x64; rv:71.0) Gecko/20100101 Firefox/71.0
                     album = ""
                     title = whatsplaying[1]
 
-                if (title != "stream1.early1900s.org:8080"):
+                if (artist != "http:"):
                     with open(lastplayed, 'w+') as lastfile:
                         lastfile.write(infostr)
 
