@@ -10,7 +10,7 @@ As of August 2019, mpd_what can scrobble your music to last.fm or libre.fm (or b
 
 Getting started:
 
-    pip3 install python-mpd2 pycurl musicbrainzngs python-magic pylast
+    pip3 install python-mpd2 pycurl python-magic pylast
     
 pylast is optional, but you can't scrobble without it.
     
