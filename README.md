@@ -10,9 +10,7 @@ As of August 2019, mpd_what can scrobble your music to last.fm or libre.fm (or b
 
 Getting started:
 
-    pip3 install python-mpd2 pycurl python-magic pylast
-    
-pylast is optional, but you can't scrobble without it.
+    pip3 install mpd_what
     
 Next, create a config.yml in `~/.config/mpd_what` with the following:
 
@@ -41,7 +39,7 @@ You can find the available options with
 
     ./mpd_what -h
 
-You can add a link to cover.jpg in your .conkyrc, or you can use `qiv --watch` to reload cover.jpg when it changes. Even better, you can have conky automatically call mpd_what to give you album art and info. Here are the pertinent lines in my own .conkyrc:
+You can add a link to cover.jpg in your .conkyrc, or you can install qiv, then use `qiv --watch` to reload cover.jpg when it changes. Even better, you can have conky automatically call mpd_what to give you album art and info. Here are the pertinent lines in my own .conkyrc:
 
     ${color}${if_mpd_playing}
     ${color 333333}$hr
