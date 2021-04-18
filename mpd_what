@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 import os
 import yaml
-import difflib
+#import difflib
 import random
 from time import time, ctime, sleep, mktime, localtime
 from sys import argv
 import re
 import requests
 from latest_user_agents import get_random_user_agent
+#from requests.utils import requote_uri
 import json
 from mpd import MPDClient
+#import pycurl
 import magic
 import unicodedata
 
-from io import BytesIO
+#from io import BytesIO
 try:
     import pylast
     lastfm = True
@@ -65,6 +67,9 @@ if __name__ == '__main__':
                 pass
     else:
         os.makedirs(config_dir, exist_ok=True)
+
+    global useragent
+    useragent = get_random_user_agent()
 
     global coverart
     
@@ -124,7 +129,6 @@ if __name__ == '__main__':
     
 #    def get_url(url,datatype):
     def get_url(url):
-        useragent = get_random_user_agent()
         h = { 'User-Agent': useragent }
         try:
             r = requests.get(url, headers=h)
