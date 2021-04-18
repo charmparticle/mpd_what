@@ -10,7 +10,7 @@ As of August 2019, mpd_what can scrobble your music to last.fm or libre.fm (or b
 
 Getting started:
 
-    pip3 install mpd_what
+    sudo pip3 install mpd_what
     
 Next, create a config.yml in `~/.config/mpd_what` with the following:
 
