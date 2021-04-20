@@ -10,6 +10,10 @@ As of August 2019, mpd_what can scrobble your music to last.fm or libre.fm (or b
 
 Getting started:
 
+    #adjust this according to your distro.
+    #pycurl is better to install through your repo
+    #since it has complex dependencies with libcurl
+    sudo apt install python3-pycurl
     sudo pip3 install mpd_what
     
 Next, create a config.yml in `~/.config/mpd_what` with the following:
