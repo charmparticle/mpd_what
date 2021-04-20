@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 import os
 import yaml
+import difflib
 import random
 from time import time, ctime, sleep, mktime, localtime
 from sys import argv
 import re
-import requests
+#from requests.utils import requote_uri
 from latest_user_agents import get_random_user_agent
 import json
 from mpd import MPDClient
+import pycurl
 import magic
 import unicodedata
 
+from io import BytesIO
 try:
     import pylast
     lastfm = True
@@ -66,7 +69,6 @@ if __name__ == '__main__':
 
     global useragent
     useragent = get_random_user_agent()
-
     global coverart
     
     def help_msg(me):
@@ -90,6 +92,7 @@ if __name__ == '__main__':
                 when = ctime(epoch)
                 with open (errlog, 'a') as logfile:
                     logfile.write(str(when) + ': ' + ' in init() ' + str(e) + '\n')
+                #print("There was a problem creating coverart_dir. Make sure you have the correct permissions, etc.")
         #fi 
 
         mpc = MPDClient()
@@ -117,18 +120,37 @@ if __name__ == '__main__':
                         '').replace('++',
                         '+').replace('++',
                         '+')
-        #query = remove_accents(query)
-        #query = query.decode()
+        query.encode('utf-8')
+        query = remove_accents(query)
+        query = query.decode()
         return(query)
     
-    def get_url(url, datatype):
-        h = { 'User-Agent': useragent }
-        if datatype == 'image':
-            r = requests.get(url, headers=h, stream=True)
-            data = r.raw.read()
-        elif datatype == 'text':
-            r = requests.get(url, headers=h)
-            data = r.text
+    def get_url(url,datatype):
+        #if url == 'musicbrainz':
+        #    data = coverart
+        #else:
+        #life, uh, finds a way
+        buffer = BytesIO()
+        c = pycurl.Curl()
+        c.setopt(c.FOLLOWLOCATION, 1)
+        c.setopt(c.USERAGENT, useragent)
+        c.setopt(c.URL, url)
+        c.setopt(c.WRITEDATA, buffer)
+        try:
+            c.perform()
+            c.close()
+        except Exception as e:
+            epoch = time()
+            when = ctime(epoch)
+            with open (errlog, 'a') as logfile:
+                logfile.write(str(when) + ': ' + ' in get_url() ' + str(e) + '\n')
+            #print("error in geturl: " + e)
+            return False
+        data = buffer.getvalue()
+        buffer.close()
+        if datatype != '':
+            data = data.decode(datatype, errors="ignore")
+        #fi
         return(data)
     
     def is_image(f):
@@ -154,8 +176,7 @@ if __name__ == '__main__':
                     os.remove(fname)
                 if url != '':
                     try:
-                        #data = get_url(url, '')
-                        data = get_url(url, 'image')
+                        data = get_url(url, '')
                         coverart = open(fname, 'wb')
                         coverart.write(data)
                         coverart.close()
@@ -166,8 +187,6 @@ if __name__ == '__main__':
                             os.symlink(fname, disp)
                             return True
                         else:
-                            with open (errlog, 'a') as logfile:
-                                logfile.write(str(when) + ': ' + ' in get_coverart() ' + '\n')
                             return False
                     except Exception as e:
                         epoch = time()
@@ -199,8 +218,7 @@ if __name__ == '__main__':
                 station = mpd_info['file']
             if 'kexp' in station:
                 url = "https://legacy-api.kexp.org/play/?format=json&limit=1&ordering=-airdate"
-                onair = get_url(url, 'text')
-                #onair = get_url(url, "utf-8")
+                onair = get_url(url, "utf-8")
                 if str(json.loads(onair)["results"][0]["playtype"]["name"]) == '"Air break"':
                     artist = "KEXP"
                     song = "Air Break"
@@ -211,7 +229,7 @@ if __name__ == '__main__':
                 #fi
             elif 'kusf' in station:
                 url = "http://www.kusf.org/api/broadcasting"
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["Track"]["artist"]).replace('"', '')
                 album = str(json.loads(onair)["Track"]["album"]).replace('"', '')
                 song = str(json.loads(onair)["Track"]["title"]).replace('"', '')
@@ -226,7 +244,7 @@ if __name__ == '__main__':
                     channel = "Music"
                 #fi
                 url = 'http://tracklist-api.kcrw.com/{}/all/1?page_size=1&callback=$.KCRW.refresh_tracklist'.format(channel)
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 #the kcrw "json" is not valid json until
                 #the first and last line are removed :-/
                 onair = '\n'.join(onair.splitlines()[1:-1])
@@ -239,13 +257,13 @@ if __name__ == '__main__':
                     get_coverart(fname, coverart_url)
                 #fi
             elif 'mountain chill' in station:
-                url='https://api.live365.com/v2/station/a77575?cb=969742'
-                onair = get_url(url, 'text')
+                url='https://api.live365.com/v1/station/b58063'
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["current-track"]["artist"])
                 song = str(json.loads(onair)["current-track"]["title"].replace("';StreamURL='",''))
             elif 'wfmu' in station:
                 url='https://wfmu.org/wp-content/themes/wfmu-theme/library/php/includes/liveNow.php'
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["artist"]).replace('"', '')
                 song = str(json.loads(onair)["song"]).replace('"', '')
                 album = str(json.loads(onair)["album"]).replace('"', '')
@@ -253,19 +271,6 @@ if __name__ == '__main__':
                     coverart_url = str(json.loads(onair)["image"]["url"])
                     fname = '+'.join((artist,album)).replace(' ', '+')
                     get_coverart(fname, coverart_url)
-            elif 'concertzender' in station:
-                if 'klassieke' in station:
-                    url="https://concertzender.nl/wp-admin/admin-ajax.php?action=get_stream_info&kind=1&lang=en"
-                    onair = get_url(url, 'text')
-                    artist = "Concertzender"
-                    album = "Classical"
-                song = str(json.loads(onair)['current']['title'])
-            elif 'zonder bach' in station:
-                url="https://concertzender.nl/wp-admin/admin-ajax.php?action=get_stream_info&kind=28&lang=en"
-                onair = get_url(url, 'text')
-                artist = "Concertzender"
-                album = "Classical"
-                song = str(json.loads(onair)['current']['title'])
             elif 'somafm' in station:
                 if 'sonic universe' in station:
                     url="https://somafm.com/songs/sonicuniverse.json"
@@ -304,14 +309,14 @@ if __name__ == '__main__':
                 elif 'left coast 70s' in station:
                     url="https://somafm.com/songs/seventies.json"
                 #fi
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)['songs'][0]['artist']).replace('"', '')
                 album = str(json.loads(onair)['songs'][0]['album']).replace('"', '')
                 song = str(json.loads(onair)['songs'][0]['title']).replace('"', '')
             elif 'wwoz' in station:
                 epoch=mktime(localtime())
                 url="https://www.wwoz.org/api/schedule/episode/one/at/{}".format(epoch)
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = "WWOZ"
                 album = json.loads(onair)["showhost"]["name"]
                 #if str(album) == 'None':
@@ -319,7 +324,7 @@ if __name__ == '__main__':
                 song = str(json.loads(onair)["title"])
             elif 'nts live' in station:
                 url = "https://www.nts.live/api/v2/live"
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["results"][0]["now"]["broadcast_title"]).replace('"', '')
                 album = "NTS"
                 if dl:
@@ -329,7 +334,7 @@ if __name__ == '__main__':
                 #fi
             elif 'kutx' in station:
                 url = "https://api.composer.nprstations.org/v1/widget/50ef24ebe1c8a1369593d032/now?format=json"
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["onNow"]["song"]["artistName"]).replace('"', '')
                 album = str(json.loads(onair)["onNow"]["song"]["collectionName"]).replace('"', '')
                 song = str(json.loads(onair)["onNow"]["song"]["trackName"]).replace('"', '')
@@ -342,7 +347,7 @@ if __name__ == '__main__':
                 #fi
             elif 'xray' in station:
                 url="https://xray.fm/api/tracks/current"
-                onair = get_url(url, 'text')
+                onair = get_url(url, "utf-8")
                 artist = str(json.loads(onair)["artist"])
                 album = str(json.loads(onair)["album"])
                 song = str(json.loads(onair)["title"])
@@ -401,8 +406,7 @@ if __name__ == '__main__':
                     #Forcing a pause so discogs doesn't kick me out.
                     sleep(5)
                     discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
-                    #html = get_url(discogs_url, 'utf-8')
-                    html = get_url(discogs_url, 'text')
+                    html = get_url(discogs_url, 'utf-8')
                     #try:
                     coverart_url = re.findall('http[^"]*.jpg', html)
                     if len(coverart_url) > 0:
@@ -411,8 +415,7 @@ if __name__ == '__main__':
                     else:
                         query = prepare_query(data[0])
                         discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
-                        html = get_url(discogs_url, 'text')
-                        #html = get_url(discogs_url, 'utf-8')
+                        html = get_url(discogs_url, 'utf-8')
                         coverart_url = re.findall('http[^"]*.jpg', html)
                         if len(coverart_url) > 0:
                             coverart_url = coverart_url[0]
@@ -472,10 +475,6 @@ if __name__ == '__main__':
             song = mpdinfo.get('title', '')
             whatsplaying = [artist, album, song]
 
-        bads = ['http:', 'https:']
-        for bad in bads:
-            if bad in whatsplaying:
-                exit()
         #why is this needed? because whatsplaying, which should be
         #a list of strings, might contain an empty string as one of its
         #entries, and that messes up the logic.
