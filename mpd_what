@@ -4,7 +4,7 @@ import yaml
 import difflib
 import random
 from time import time, ctime, sleep, mktime, localtime
-from sys import argv
+from sys import argv, stderr
 import re
 #from requests.utils import requote_uri
 from latest_user_agents import get_random_user_agent
@@ -52,7 +52,7 @@ if __name__ == '__main__':
     if os.path.exists(config):
         with open(config, 'r') as ymlfile:
             try:
-                cfg = yaml.load(ymlfile)
+                cfg = yaml.load(ymlfile, Loader=yaml.BaseLoader)
                 mpd_host = cfg['mpd_host']
                 mpd_port = cfg['mpd_port']
                 coverart_dir = cfg['coverart_dir']
@@ -64,8 +64,18 @@ if __name__ == '__main__':
                 librefm_pass = cfg['librefm_pass']
             except KeyError:
                 pass
+            except (yaml.YAMLError, yaml.scanner.ScannerError) as e:
+                print("Error parsing your config file. Maybe try rm -r ~/.config/mpd_what and start over.", file=stderr)
+                with open (errlog, 'a') as logfile:
+                    epoch = time()
+                    when = ctime(epoch)
+                    logfile.write(str(when) + ': ' + 'bad YAML in your config: ' + str(e) + '\n')
     else:
         os.makedirs(config_dir, exist_ok=True)
+        config_dict={'coverart_dir':coverart_dir, 'mpd_host':mpd_host,
+                     'mpd_port':mpd_port}
+        with open(config, 'w+') as config_file:
+            config_file.write(yaml.dump(config_dict, default_flow_style=False))
 
     global useragent
     useragent = get_random_user_agent()
@@ -91,6 +101,7 @@ if __name__ == '__main__':
                 epoch = time()
                 when = ctime(epoch)
                 with open (errlog, 'a') as logfile:
+                    print("Error writing to your coverart dir. Ensure you have permissions to write there.", file=stderr)
                     logfile.write(str(when) + ': ' + ' in init() ' + str(e) + '\n')
                 #print("There was a problem creating coverart_dir. Make sure you have the correct permissions, etc.")
         #fi 
@@ -511,7 +522,9 @@ if __name__ == '__main__':
                     oneline_infostr = infostr.replace('\n', ';')
 
                     with open(playlist, 'a') as p:
-                        p.write(oneline_infostr + '\n')
+                        epoch = time()
+                        today_date = ctime(epoch)
+                        p.write(today_date + ': ' + oneline_infostr + '\n')
 
                     if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and scrobble and lastfm:
 
