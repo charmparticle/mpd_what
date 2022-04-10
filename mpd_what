@@ -181,7 +181,6 @@ if __name__ == '__main__':
                 fname = f
             else:
                 fname = '{}/{}'.format(coverart_dir,f)
-            print(fname)
             disp = '{}/{}'.format(coverart_dir,'cover.jpg')
             if os.path.isfile(fname) and is_image(fname):
                 if os.path.isfile(disp) and os.readlink(disp) == fname:
