@@ -5,7 +5,6 @@ import difflib
 import random
 from time import time, ctime, sleep, mktime, localtime
 from sys import argv, stderr
-import re
 #from requests.utils import requote_uri
 from latest_user_agents import get_random_user_agent
 import json
@@ -13,6 +12,8 @@ from mpd import MPDClient
 import pycurl
 import magic
 import unicodedata
+import discogs_client
+
 
 from io import BytesIO
 try:
@@ -33,6 +34,7 @@ if __name__ == '__main__':
     errlog = '{}/{}'.format(config_dir, 'log')
     mpd_host="localhost"
     mpd_port="6600"
+    discogs_token = ""
     lastfm_user = ""
     lastfm_pass = ""
     lastfm_api_key = ""
@@ -56,6 +58,7 @@ if __name__ == '__main__':
                 mpd_host = cfg['mpd_host']
                 mpd_port = cfg['mpd_port']
                 coverart_dir = cfg['coverart_dir']
+                discogs_token = cfg['discogs_token']
                 lastfm_user = cfg['lastfm_user']
                 lastfm_pass = cfg['lastfm_pass']
                 lastfm_api_key = cfg['lastfm_api_key']
@@ -73,7 +76,7 @@ if __name__ == '__main__':
     else:
         os.makedirs(config_dir, exist_ok=True)
         config_dict={'coverart_dir':coverart_dir, 'mpd_host':mpd_host,
-                     'mpd_port':mpd_port}
+                'mpd_port':mpd_port, 'discogs_token':'please_sign_up_at_discogs_and_generate_a_token'}
         with open(config, 'w+') as config_file:
             config_file.write(yaml.dump(config_dict, default_flow_style=False))
 
@@ -124,8 +127,12 @@ if __name__ == '__main__':
         only_ascii = nfkd_form.encode('ASCII', 'ignore')
         return only_ascii
 
-    def prepare_query(*stuff):
-        query = '+'.join((stuff)).replace(' ',
+    def prepare_query(stuff):
+        q = [''.join(i) for i in stuff]
+        s = ''
+        for i in q:
+            s = s + i
+        query = s.replace(' ',
                         '+').replace('/',
                         '+').replace('&',
                         '').replace('++',
@@ -170,7 +177,11 @@ if __name__ == '__main__':
     
     def get_coverart(f, url):
         try:
-            fname = '{}/{}'.format(coverart_dir,f)
+            if coverart_dir in f:
+                fname = f
+            else:
+                fname = '{}/{}'.format(coverart_dir,f)
+            print(fname)
             disp = '{}/{}'.format(coverart_dir,'cover.jpg')
             if os.path.isfile(fname) and is_image(fname):
                 if os.path.isfile(disp) and os.readlink(disp) == fname:
@@ -386,11 +397,27 @@ if __name__ == '__main__':
         return([artist, album, song])
     
     def get_coverart_info(data): 
-        try:
-            query = prepare_query(data[0], data[1])
-        except:
+        nm = prepare_query(data)
+        fname = '{}/{}'.format(coverart_dir,nm)
+        fname = fname + '.jpg'
+        if os.path.isfile(fname):
+            #get_coverart links the file if it's already been dled.
+            get_coverart(fname, '')
+        else:
             try:
-                query = prepare_query(data[0])
+                dc = discogs_client.Client('mpd_what/2.0', user_token=discogs_token)
+                if len(data) <= 3:
+                    results = dc.search(data[1], artist=data[0], type='release')
+                    url = results.page(1)[0].images[0]['uri']
+                    #with open (errlog, 'a') as logfile:
+                    #    logfile.write(str(url) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
+                elif len(data) == 1:
+                    results = dc.search(data[0], type='release')
+                    url = results.page(1)[0].images[0]['uri']
+                    #with open (errlog, 'a') as logfile:
+                    #    logfile.write(str(url) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
+                print(fname)
+                get_coverart(fname, url)
             except:
                 try:
                     get_coverart("generic_lp_icon.jpg", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png")
@@ -403,58 +430,6 @@ if __name__ == '__main__':
                         logfile.write(str(when) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
                     #print("OS error in get_coverart_info: " + e)
                     exit()
-
-        fname = '{}/{}'.format(coverart_dir,query)
-        #I don't want to hit discogs if I don't need to.
-        try:
-            if os.path.isfile(fname + '.jpg'):
-                #get_coverart links the file if it's already been dled.
-                get_coverart(query + '.jpg', '')
-            else:
-                if os.path.isfile(fname + '.jpg'):
-                    get_coverart(query + '.jpg', '')
-                else:
-                    #Forcing a pause so discogs doesn't kick me out.
-                    sleep(5)
-                    discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
-                    html = get_url(discogs_url, 'utf-8')
-                    #try:
-                    coverart_url = re.findall('http[^"]*.jpg', html)
-                    if len(coverart_url) > 0:
-                        coverart_url = coverart_url[0]
-                        get_coverart(query + '.jpg', coverart_url)
-                    else:
-                        query = prepare_query(data[0])
-                        discogs_url = 'https://www.discogs.com/search/?q={}'.format(query)
-                        html = get_url(discogs_url, 'utf-8')
-                        coverart_url = re.findall('http[^"]*.jpg', html)
-                        if len(coverart_url) > 0:
-                            coverart_url = coverart_url[0]
-                            get_coverart(query + '.jpg', coverart_url)
-                            sleep(5)
-                        else:
-                            #print(query)
-                            #print('index error searching discogs')
-                            get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
-            #fi
-        except Exception as e:
-            epoch = time()
-            when = ctime(epoch)
-            with open (errlog, 'a') as logfile:
-                logfile.write(str(when) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
-            #no album art found :-(
-            #print(query)
-            #print(str(e))
-            try:
-                get_coverart('generic_lp_icon.jpg', 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png')
-                #print('cannot retrieve artwork from discogs.')
-            except:
-                epoch = time()
-                when = ctime(epoch)
-                with open (errlog, 'a') as logfile:
-                    logfile.write(str(when) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
-                return False
-        #fi
     
     def get_mpd_info():
         global showinfo

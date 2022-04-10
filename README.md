@@ -16,12 +16,16 @@ Getting started:
 To upgrade, simply use python's package manager:
 
     sudo pip3 install -U mpd_what
+
+IMPORTANT! In order to get coverart now, you have to generate a token at discogs.com. To do this, sign up for a free account at discogs.com,
+then go to the user profile menu, click on settings, click on "developer", and click on "generate new token".
     
 Next, create a config.yml in `~/.config/mpd_what` with the following:
 
     mpd_host: localhost
     mpd_port: 6600
     coverart_dir: /tmp/mpd_what/coverart
+    discogs_token: the token you generated
     
 replacing /tmp/mpd_what/coverart with your preferred coverart area (I like hosting my coverarts on my webserver) and optionally:
 
