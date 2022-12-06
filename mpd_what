@@ -387,7 +387,7 @@ if __name__ == '__main__':
                     if len(info) == 1:
                         (artist)=info[0]
                     elif len(info) == 2:
-                        (artist,album) = info
+                        (artist,song) = info
                     elif len(info) == 3:
                         (artist,album,song) = info
             #fi
