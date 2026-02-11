@@ -1,580 +1,752 @@
 #!/usr/bin/env python3
+"""
+MPD What - A tool for fetching album art, displaying track info, and scrobbling
+for Music Player Daemon (MPD).
+"""
 import os
-#import logging
 import yaml
-import difflib
 import random
-from time import time, ctime, sleep, mktime, localtime
-from sys import argv, stderr
-#from requests.utils import requote_uri
-from urllib.parse import urlparse
-from latest_user_agents import get_random_user_agent
+import unicodedata
 import json
+from time import time, ctime, mktime, localtime
+from sys import argv, stderr
+from pathlib import Path
+from urllib.parse import urlparse
+from io import BytesIO
+from dataclasses import dataclass
+from typing import Optional, List, Tuple
+
+from latest_user_agents import get_random_user_agent
 from mpd import MPDClient
 import pycurl
 import magic
-import unicodedata
 import discogs_client
 
-
-from io import BytesIO
 try:
     import pylast
-    lastfm = True
+    LASTFM_AVAILABLE = True
 except ImportError:
-    lastfm = False
+    LASTFM_AVAILABLE = False
 
-if __name__ == '__main__':
-################################################################################
-# use your config file to change these
-    config_dir = '~/.config/mpd_what'
-# if coverart_dir, mpd_host, and mpd_port are set in the config, the config
-# values supercede the following:
-    coverart_dir = '~/Pictures/coverart'                                                    #
-    lastplayed = '{}/{}'.format(config_dir, 'last')
-    playlist = '{}/{}'.format(config_dir, 'playlist.txt')
-    errlog = '{}/{}'.format(config_dir, 'log')
-    mpd_host="localhost"
-    mpd_port="6600"
-    discogs_token = ""
-    lastfm_user = ""
-    lastfm_pass = ""
-    lastfm_api_key = ""
-    lastfm_api_secret = ""
-    showinfo=True
-    fdl=False
-    dl=False
-    scrobble=False
-################################################################################
-# This part is necessary for python to understand what '~' means.
-    config_dir = os.path.expanduser(config_dir)
-    coverart_dir = os.path.expanduser(coverart_dir)
-    lastplayed = os.path.expanduser(lastplayed)
-    playlist = os.path.expanduser(playlist)
-    errlog = os.path.expanduser(errlog)
-################################################################################
-    config = '{}/{}'.format(config_dir, 'config.yml')
-    if os.path.exists(config):
-        with open(config, 'r') as ymlfile:
+
+@dataclass
+class Config:
+    """Configuration for MPD What."""
+    config_dir: Path
+    coverart_dir: Path
+    lastplayed_file: Path
+    playlist_file: Path
+    error_log: Path
+    mpd_host: str = "localhost"
+    mpd_port: str = "6600"
+    discogs_token: str = ""
+    lastfm_user: str = ""
+    lastfm_pass: str = ""
+    lastfm_api_key: str = ""
+    lastfm_api_secret: str = ""
+    librefm_user: str = ""
+    librefm_pass: str = ""
+    showinfo: bool = True
+    download: bool = False
+    force_download: bool = False
+    scrobble: bool = False
+
+    @classmethod
+    def load(cls, config_path: Optional[Path] = None) -> 'Config':
+        """Load configuration from file or create default."""
+        if config_path is None:
+            config_path = Path.home() / '.config' / 'mpd_what'
+        
+        config_path = Path(config_path).expanduser()
+        
+        # Default paths
+        config = cls(
+            config_dir=config_path,
+            coverart_dir=Path.home() / 'Pictures' / 'coverart',
+            lastplayed_file=config_path / 'last',
+            playlist_file=config_path / 'playlist.txt',
+            error_log=config_path / 'log'
+        )
+        
+        config_file = config_path / 'config.yml'
+        
+        if config_file.exists():
             try:
-                cfg = yaml.load(ymlfile, Loader=yaml.BaseLoader)
-                mpd_host = cfg['mpd_host']
-                mpd_port = cfg['mpd_port']
-                coverart_dir = cfg['coverart_dir']
-                discogs_token = cfg['discogs_token']
-                lastfm_user = cfg['lastfm_user']
-                lastfm_pass = cfg['lastfm_pass']
-                lastfm_api_key = cfg['lastfm_api_key']
-                lastfm_api_secret = cfg['lastfm_api_secret']
-                librefm_user = cfg['librefm_user']
-                librefm_pass = cfg['librefm_pass']
-            except KeyError:
-                pass
-            except (yaml.YAMLError, yaml.scanner.ScannerError) as e:
-                print("Error parsing your config file. Maybe try rm -r ~/.config/mpd_what and start over.", file=stderr)
-                with open (errlog, 'a') as logfile:
-                    epoch = time()
-                    when = ctime(epoch)
-                    logfile.write(str(when) + ': ' + 'bad YAML in your config: ' + str(e) + '\n')
-    else:
-        os.makedirs(config_dir, exist_ok=True)
-        config_dict={'coverart_dir':coverart_dir, 'mpd_host':mpd_host,
-                'mpd_port':mpd_port, 'discogs_token':'please_sign_up_at_discogs_and_generate_a_token'}
-        with open(config, 'w+') as config_file:
-            config_file.write(yaml.dump(config_dict, default_flow_style=False))
-
-    #logging.basicConfig(filename=errlog, encoding='utf-8', level=logging.DEBUG)
-
-    global useragent
-    useragent = get_random_user_agent()
-    global coverart
-    
-    def help_msg(me):
-        print("usage:\n" +
-              "\n{} -sc  or --scrobble to try to scrobble music to last.fm or libre.fm".format(me) +
-              "\n{} -g  or --get to download album art".format(me) +
-              "\n{} -q  or --quiet to not print info".format(me) +
-              "\narguments can be composed, eg:" +
-              "\n\n{} -sc -g -q".format(me))
-
-    def init():
-        if os.path.exists(coverart_dir):
-            pass
-        else:
-            try:
-            #python3 niceness: with exist_ok, python will go ahead an make directories
-            #recursively, without complaining that any of the dirs don't exist.
-                os.makedirs(coverart_dir, exist_ok=True)
-            except OSError as e:
-                epoch = time()
-                when = ctime(epoch)
-                with open (errlog, 'a') as logfile:
-                    print("Error writing to your coverart dir. Ensure you have permissions to write there.", file=stderr)
-                    logfile.write(str(when) + ': ' + ' in init() ' + str(e) + '\n')
-                #print("There was a problem creating coverart_dir. Make sure you have the correct permissions, etc.")
-        #fi 
-
-        mpc = MPDClient()
-        mpc.connect(mpd_host, mpd_port)
-        state = mpc.status()['state']
-
-        if state == "stop":
-            exit(0)
-        #fi
-
-        what = mpc.currentsong()
-        mpc.close()
-        mpc.disconnect()
-        return(what)
-
-    def remove_accents(input_str):
-        nfkd_form = unicodedata.normalize('NFKD', input_str)
-        only_ascii = nfkd_form.encode('ASCII', 'ignore')
-        return only_ascii
-
-    def prepare_query(stuff):
-        q = [''.join(i) for i in stuff]
-        s = ''
-        for i in q:
-            s = s + i
-        query = s.replace(' ',
-                        '+').replace('/',
-                        '+').replace('&',
-                        '').replace('++',
-                        '+').replace('++',
-                        '+')
-        query.encode('utf-8')
-        query = remove_accents(query)
-        query = query.decode()
-        return(query)
-    
-    def get_url(url,datatype):
-        #if url == 'musicbrainz':
-        #    data = coverart
-        #else:
-        #life, uh, finds a way
-        buffer = BytesIO()
-        c = pycurl.Curl()
-        c.setopt(c.FOLLOWLOCATION, 1)
-        c.setopt(c.USERAGENT, useragent)
-        c.setopt(c.URL, url)
-        c.setopt(c.WRITEDATA, buffer)
-        try:
-            c.perform()
-            c.close()
-        except Exception as e:
-            epoch = time()
-            when = ctime(epoch)
-            with open (errlog, 'a') as logfile:
-                logfile.write(str(when) + ': ' + ' in get_url() ' + str(e) + '\n')
-            #print("error in geturl: " + e)
-            return False
-        data = buffer.getvalue()
-        buffer.close()
-        if datatype != '':
-            data = data.decode(datatype, errors="ignore")
-        #fi
-        return(data)
-    
-    def is_image(f):
-        ret = 'image' in magic.from_file(f, mime=True)
-        return ret
-    
-    def get_coverart(f, url):
-        try:
-            if coverart_dir in f:
-                fname = f
-            else:
-                fname = '{}/{}'.format(coverart_dir,f)
-            disp = '{}/{}'.format(coverart_dir,'cover.jpg')
-            if os.path.isfile(fname) and is_image(fname):
-                if os.path.isfile(disp) and os.readlink(disp) == fname:
-                    return True
-                else:
-                    if os.path.isfile(disp):
-                        os.remove(disp)
-                    os.symlink(fname, disp)
-                    return True
-                #fi
-            else:
-                #somehow this coverart file isn't an image.
-                if os.path.isfile(fname):
-                    os.remove(fname)
-                if url != '':
-                    try:
-                        data = get_url(url, '')
-                        coverart = open(fname, 'wb')
-                        coverart.write(data)
-                        coverart.close()
-                        if is_image(fname):
-                            if os.path.isfile(disp):
-                                os.remove(disp)
-                            #fi
-                            os.symlink(fname, disp)
-                            return True
+                with open(config_file, 'r') as f:
+                    cfg = yaml.load(f, Loader=yaml.BaseLoader)
+                    
+                # Update config with values from file
+                for key, value in cfg.items():
+                    if hasattr(config, key):
+                        if key == 'coverart_dir':
+                            setattr(config, key, Path(value).expanduser())
                         else:
-                            return False
-                    except Exception as e:
-                        epoch = time()
-                        when = ctime(epoch)
-                        with open (errlog, 'a') as logfile:
-                            logfile.write(str(when) + ': ' + ' in get_coverart() ' + str(e) + '\n')
-                        #print("error getting file " + str(e))
-                        return False
-            #fi
+                            setattr(config, key, value)
+                            
+            except (yaml.YAMLError, yaml.scanner.ScannerError) as e:
+                config.log_error("Error parsing config file: " + str(e))
+                print("Error parsing your config file. Check ~/.config/mpd_what/log", 
+                      file=stderr)
+        else:
+            # Create default config file
+            config_path.mkdir(parents=True, exist_ok=True)
+            default_config = {
+                'coverart_dir': str(config.coverart_dir),
+                'mpd_host': config.mpd_host,
+                'mpd_port': config.mpd_port,
+                'discogs_token': 'please_sign_up_at_discogs_and_generate_a_token'
+            }
+            with open(config_file, 'w') as f:
+                yaml.dump(default_config, f, default_flow_style=False)
+        
+        # Ensure coverart directory exists
+        config.coverart_dir.mkdir(parents=True, exist_ok=True)
+        
+        return config
+    
+    def log_error(self, message: str) -> None:
+        """Log an error message with timestamp."""
+        try:
+            self.error_log.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.error_log, 'a') as f:
+                timestamp = ctime(time())
+                f.write(str(timestamp) + ': ' + message + '\n')
         except Exception as e:
-            epoch = time()
-            when = ctime(epoch)
-            with open (errlog, 'a') as logfile:
-                logfile.write(str(when) + ': ' + ' in get_coverart() ' + str(e) + '\n')
-            #print("error in get_coverart: " + str(e))
+            print("Failed to write to error log: " + str(e), file=stderr)
+
+
+class MPDInfo:
+    """Handle MPD connection and current song information."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+    
+    def get_current_song(self) -> Optional[dict]:
+        """Get currently playing song from MPD."""
+        try:
+            client = MPDClient()
+            client.connect(self.config.mpd_host, self.config.mpd_port)
+            
+            status = client.status()
+            if status['state'] == 'stop':
+                client.close()
+                client.disconnect()
+                return None
+            
+            current_song = client.currentsong()
+            client.close()
+            client.disconnect()
+            
+            return current_song
+        except Exception as e:
+            self.config.log_error("Error connecting to MPD: " + str(e))
+            return None
+
+
+class CoverArtManager:
+    """Handle album art downloading and management."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.user_agent = get_random_user_agent()
+    
+    @staticmethod
+    def remove_accents(text: str) -> str:
+        """Remove accents from unicode string."""
+        nfkd_form = unicodedata.normalize('NFKD', text)
+        return nfkd_form.encode('ASCII', 'ignore').decode()
+    
+    @staticmethod
+    def prepare_query(parts: List[str]) -> str:
+        """Prepare search query from artist/album/song parts."""
+        query = ''.join(parts)
+        query = query.replace(' ', '+').replace('/', '+').replace('&', '')
+        query = query.replace('++', '+')
+        query = CoverArtManager.remove_accents(query)
+        return query
+    
+    def download_url(self, url: str, as_text: bool = False) -> Optional[bytes]:
+        """Download content from URL using pycurl."""
+        buffer = BytesIO()
+        curl = pycurl.Curl()
+        
+        try:
+            curl.setopt(curl.FOLLOWLOCATION, 1)
+            curl.setopt(curl.USERAGENT, self.user_agent)
+            curl.setopt(curl.URL, url)
+            curl.setopt(curl.WRITEDATA, buffer)
+            curl.perform()
+            curl.close()
+            
+            data = buffer.getvalue()
+            buffer.close()
+            
+            if as_text:
+                return data.decode('utf-8', errors='ignore')
+            return data
+            
+        except Exception as e:
+            self.config.log_error("Error downloading " + url + ": " + str(e))
+            return None
+    
+    @staticmethod
+    def is_image(filepath: Path) -> bool:
+        """Check if file is a valid image."""
+        try:
+            return 'image' in magic.from_file(str(filepath), mime=True)
+        except Exception:
             return False
     
-    def get_station_info(station,dl):
+    def set_cover_symlink(self, filepath: Path) -> bool:
+        """Create symlink to current cover art."""
+        display_path = self.config.coverart_dir / 'cover.jpg'
+        
+        try:
+            if display_path.is_symlink() or display_path.exists():
+                if display_path.is_symlink() and display_path.resolve() == filepath:
+                    return True
+                display_path.unlink()
+            
+            display_path.symlink_to(filepath)
+            return True
+        except Exception as e:
+            self.config.log_error("Error creating symlink: " + str(e))
+            return False
+    
+    def get_coverart(self, filename: str, url: str = "") -> bool:
+        """Download and set cover art."""
+        # Determine full path
+        if '/' in filename:
+            filepath = Path(filename)
+        else:
+            filepath = self.config.coverart_dir / filename
+        
+        # Check if file already exists and is valid
+        if filepath.exists() and self.is_image(filepath):
+            return self.set_cover_symlink(filepath)
+        
+        # Download if URL provided
+        if url:
+            try:
+                data = self.download_url(url)
+                if data:
+                    filepath.parent.mkdir(parents=True, exist_ok=True)
+                    with open(filepath, 'wb') as f:
+                        f.write(data)
+                    
+                    if self.is_image(filepath):
+                        return self.set_cover_symlink(filepath)
+                    else:
+                        filepath.unlink()
+                        return False
+            except Exception as e:
+                self.config.log_error("Error saving cover art: " + str(e))
+                return False
+        
+        return False
+    
+    def fetch_from_discogs(self, parts: List[str]) -> bool:
+        """Fetch cover art from Discogs."""
+        if not self.config.discogs_token:
+            return False
+        
+        query = self.prepare_query(parts)
+        filepath = self.config.coverart_dir / (query + ".jpg")
+        
+        if filepath.exists():
+            return self.get_coverart(str(filepath))
+        
+        try:
+            client = discogs_client.Client(
+                'mpd_what/3.0',
+                user_token=self.config.discogs_token
+            )
+            
+            if len(parts) >= 2:
+                results = client.search(parts[1], artist=parts[0], type='release')
+            else:
+                results = client.search(parts[0], type='release')
+            
+            if results.count > 0:
+                first_result = results.page(1)[0]
+                if hasattr(first_result, 'images') and first_result.images:
+                    url = first_result.images[0]['uri']
+                    return self.get_coverart(str(filepath), url)
+        except Exception as e:
+            self.config.log_error("Error fetching from Discogs: " + str(e))
+        
+        # Fallback to generic icon
+        return self.get_coverart(
+            "generic_lp_icon.jpg",
+            "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png"
+        )
+    
+    def get_station_info(self, station: str, dl: bool) -> List[str]:
+        """Get currently playing information from various internet radio stations."""
         artist = ""
         album = ""
         song = ""
-        coverart = ""
+        
         try:
             station = station.lower()
+            
             if station == 'source':
-                #some internet radio stations have the weirdest
-                #habits. I'm looking at you, xray.
-                mpd_info = init()
-                station = mpd_info['file']
+                # some internet radio stations have the weirdest habits
+                mpd_info = MPDInfo(self.config)
+                current = mpd_info.get_current_song()
+                if current:
+                    station = current.get('file', '')
+            
             if 'kexp' in station:
                 url = "https://legacy-api.kexp.org/play/?format=json&limit=1&ordering=-airdate"
-                onair = get_url(url, "utf-8")
-                if str(json.loads(onair)["results"][0]["playtype"]["name"]) == '"Air break"':
-                    artist = "KEXP"
-                    song = "Air Break"
-                else:
-                    artist = str(json.loads(onair)["results"][0]["artist"]["name"])
-                    album = str(json.loads(onair)["results"][0]["release"]["name"])
-                    song = str(json.loads(onair)["results"][0]["track"]["name"])
-                #fi
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    if str(data["results"][0]["playtype"]["name"]) == '"Air break"':
+                        artist = "KEXP"
+                        song = "Air Break"
+                    else:
+                        artist = str(data["results"][0]["artist"]["name"])
+                        album = str(data["results"][0]["release"]["name"])
+                        song = str(data["results"][0]["track"]["name"])
+            
             elif 'kusf' in station or 'no name' in station:
                 url = "http://www.kusf.org/api/broadcasting"
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["Track"]["artist"]).replace('"', '')
-                album = str(json.loads(onair)["Track"]["album"]).replace('"', '')
-                song = str(json.loads(onair)["Track"]["title"]).replace('"', '')
-                if album == " ":
-                    album = song
-                    song = ""
-                #fi
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["Track"]["artist"]).replace('"', '')
+                    album = str(data["Track"]["album"]).replace('"', '')
+                    song = str(data["Track"]["title"]).replace('"', '')
+                    if album == " ":
+                        album = song
+                        song = ""
+            
+            elif 'kalw' in station:
+                url = "https://api.composer.nprstations.org/v1/widget/51827f44e1c8e597ac3f8461/now?format=json&style=v2&show_song=true"
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = "KALW"
+                    album = str(data["Track"]["name"]).replace('"', '')
+            
             elif 'kcrw' in station:
                 if 'kcrw live' in station:
                     channel = "Simulcast"
                 elif 'e24' in station:
                     channel = "Music"
-                #fi
-                url = 'http://tracklist-api.kcrw.com/{}/all/1?page_size=1&callback=$.KCRW.refresh_tracklist'.format(channel)
-                onair = get_url(url, "utf-8")
-                #the kcrw "json" is not valid json until
-                #the first and last line are removed :-/
-                onair = '\n'.join(onair.splitlines()[1:-1])
-                artist = str(json.loads(onair)["artist"])
-                album = str(json.loads(onair)["album"])
-                song = str(json.loads(onair)["title"])
-                if dl:
-                    coverart_url = str(json.loads(onair)["albumImageLarge"])
-                    fname = '+'.join((artist,album)).replace(' ', '+')
-                    get_coverart(fname, coverart_url)
-                #fi
+                else:
+                    channel = "Simulcast"
+                
+                url = 'http://tracklist-api.kcrw.com/' + channel + '/all/1?page_size=1&callback=$.KCRW.refresh_tracklist'
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    # the kcrw "json" is not valid json until the first and last line are removed
+                    onair = '\n'.join(onair.splitlines()[1:-1])
+                    data = json.loads(onair)
+                    artist = str(data["artist"])
+                    album = str(data["album"])
+                    song = str(data["title"])
+                    if dl:
+                        coverart_url = str(data["albumImageLarge"])
+                        fname = '+'.join((artist, album)).replace(' ', '+')
+                        self.get_coverart(fname, coverart_url)
+            
             elif 'mountain chill' in station:
-                url='https://api.live365.com/v1/station/b58063'
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["current-track"]["artist"])
-                song = str(json.loads(onair)["current-track"]["title"].replace("';StreamURL='",''))
+                url = 'https://api.live365.com/v1/station/b58063'
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["current-track"]["artist"])
+                    song = str(data["current-track"]["title"].replace("';StreamURL='", ''))
+            
             elif 'wfmu' in station:
-                url='https://wfmu.org/wp-content/themes/wfmu-theme/library/php/includes/liveNow.php'
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["artist"]).replace('"', '')
-                song = str(json.loads(onair)["song"]).replace('"', '')
-                album = str(json.loads(onair)["album"]).replace('"', '')
-                if dl:
-                    coverart_url = str(json.loads(onair)["image"]["url"])
-                    fname = '+'.join((artist,album)).replace(' ', '+')
-                    get_coverart(fname, coverart_url)
+                url = 'https://wfmu.org/wp-content/themes/wfmu-theme/library/php/includes/liveNow.php'
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["artist"]).replace('"', '')
+                    song = str(data["song"]).replace('"', '')
+                    album = str(data["album"]).replace('"', '')
+                    if dl:
+                        coverart_url = str(data["image"]["url"])
+                        fname = '+'.join((artist, album)).replace(' ', '+')
+                        self.get_coverart(fname, coverart_url)
+            
             elif 'somafm' in station:
+                url = None
                 if 'sonic universe' in station:
-                    url="https://somafm.com/songs/sonicuniverse.json"
+                    url = "https://somafm.com/songs/sonicuniverse.json"
                 elif 'suburbs of goa' in station:
-                    url="https://somafm.com/songs/suburbsofgoa.json"
+                    url = "https://somafm.com/songs/suburbsofgoa.json"
                 elif 'digitalis' in station:
-                    url="https://somafm.com/songs/digitalis.json"
+                    url = "https://somafm.com/songs/digitalis.json"
                 elif 'live' in station:
-                    url="https://somafm.com/songs/live.json"
+                    url = "https://somafm.com/songs/live.json"
                 elif 'underground eighties' in station:
-                    url="https://somafm.com/songs/u80s.json"
+                    url = "https://somafm.com/songs/u80s.json"
                 elif 'thistle' in station:
-                    url="https://somafm.com/songs/thistle.json"
+                    url = "https://somafm.com/songs/thistle.json"
                 elif 'fluid' in station:
-                    url="https://somafm.com/songs/fluid.json"
+                    url = "https://somafm.com/songs/fluid.json"
                 elif 'poptron' in station:
-                    url="https://somafm.com/songs/poptron.json"
+                    url = "https://somafm.com/songs/poptron.json"
                 elif 'bagel radio' in station:
-                    url="https://somafm.com/songs/bagel.json"
+                    url = "https://somafm.com/songs/bagel.json"
                 elif 'beat blender' in station:
-                    url="https://somafm.com/songs/beatblender.json"
+                    url = "https://somafm.com/songs/beatblender.json"
                 elif 'groove salad' in station:
-                    url="https://somafm.com/songs/groovesalad.json"
+                    url = "https://somafm.com/songs/groovesalad.json"
                 elif 'indie pop rocks' in station:
-                    url="https://somafm.com/songs/indiepoprocks.json"
+                    url = "https://somafm.com/songs/indiepoprocks.json"
                 elif 'lush' in station:
-                    url="https://somafm.com/songs/lush.json"
+                    url = "https://somafm.com/songs/lush.json"
                 elif 'boot liquor' in station:
-                    url="https://somafm.com/songs/bootliquor.json"
+                    url = "https://somafm.com/songs/bootliquor.json"
                 elif 'folk forward' in station:
-                    url="https://somafm.com/songs/folkfwd.json"
+                    url = "https://somafm.com/songs/folkfwd.json"
                 elif 'ill street' in station:
-                    url="https://somafm.com/songs/illstreet.json"
+                    url = "https://somafm.com/songs/illstreet.json"
                 elif 'seven inch soul' in station:
-                    url="https://somafm.com/songs/7soul.json"
+                    url = "https://somafm.com/songs/7soul.json"
                 elif 'left coast 70s' in station:
-                    url="https://somafm.com/songs/seventies.json"
-                #fi
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)['songs'][0]['artist']).replace('"', '')
-                album = str(json.loads(onair)['songs'][0]['album']).replace('"', '')
-                song = str(json.loads(onair)['songs'][0]['title']).replace('"', '')
+                    url = "https://somafm.com/songs/seventies.json"
+                
+                if url:
+                    onair = self.download_url(url, as_text=True)
+                    if onair:
+                        data = json.loads(onair)
+                        artist = str(data['songs'][0]['artist']).replace('"', '')
+                        album = str(data['songs'][0]['album']).replace('"', '')
+                        song = str(data['songs'][0]['title']).replace('"', '')
+            
             elif 'wwoz' in station:
-                epoch=mktime(localtime())
-                url="https://www.wwoz.org/api/schedule/episode/one/at/{}".format(epoch)
-                onair = get_url(url, "utf-8")
-                artist = "WWOZ"
-                album = json.loads(onair)["showhost"]["name"]
-                #if str(album) == 'None':
-                #    album=''
-                song = str(json.loads(onair)["title"])
+                epoch = mktime(localtime())
+                url = "https://www.wwoz.org/api/schedule/episode/one/at/" + str(int(epoch))
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = "WWOZ"
+                    album = data["showhost"]["name"]
+                    song = str(data["title"])
+            
             elif 'nts live' in station:
                 url = "https://www.nts.live/api/v2/live"
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["results"][0]["now"]["broadcast_title"]).replace('"', '')
-                album = "NTS"
-                if dl:
-                    coverart_url = str(json.loads(onair)["results"][0]["now"]["embeds"]["details"]["media"]["background_medium"]).replace('"', '')
-                    fname = '+'.join((artist,album)).replace(' ', '+')
-                    get_coverart(fname, coverart_url)
-                #fi
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["results"][0]["now"]["broadcast_title"]).replace('"', '')
+                    album = "NTS"
+                    if dl:
+                        coverart_url = str(data["results"][0]["now"]["embeds"]["details"]["media"]["background_medium"]).replace('"', '')
+                        fname = '+'.join((artist, album)).replace(' ', '+')
+                        self.get_coverart(fname, coverart_url)
+            
             elif 'kutx' in station:
                 url = "https://api.composer.nprstations.org/v1/widget/50ef24ebe1c8a1369593d032/now?format=json"
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["onNow"]["song"]["artistName"]).replace('"', '')
-                album = str(json.loads(onair)["onNow"]["song"]["collectionName"]).replace('"', '')
-                song = str(json.loads(onair)["onNow"]["song"]["trackName"]).replace('"', '')
-                if artist == album == song == null:
-                    album = str(json.loads(onair)["onNow"]["program"]["name"]).replace('"', '')
-                if dl:
-                    coverart_url = json.loads(onair)["onNow"]["song"]["artworkUrl100"].replace('"', '').replace('100x100', '300x300')
-                    fname = '+'.join((artist,album)).replace(' ', '+')
-                    get_coverart(fname, coverart_url)
-                #fi
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["onNow"]["song"]["artistName"]).replace('"', '')
+                    album = str(data["onNow"]["song"]["collectionName"]).replace('"', '')
+                    song = str(data["onNow"]["song"]["trackName"]).replace('"', '')
+                    if artist == album == song == 'None':
+                        album = str(data["onNow"]["program"]["name"]).replace('"', '')
+                    if dl:
+                        coverart_url = data["onNow"]["song"]["artworkUrl100"].replace('"', '').replace('100x100', '300x300')
+                        fname = '+'.join((artist, album)).replace(' ', '+')
+                        self.get_coverart(fname, coverart_url)
+            
             elif 'xray' in station:
-                url="https://xray.fm/api/tracks/current"
-                onair = get_url(url, "utf-8")
-                artist = str(json.loads(onair)["artist"])
-                album = str(json.loads(onair)["album"])
-                song = str(json.loads(onair)["title"])
-                #if dl:
-                #    coverart_url = json.loads(onair)["now"]["Image"]["url_md"].replace('"', '')
-                #    fname = '+'.join((artist,album)).replace(' ', '+')
-                #    get_coverart(fname, coverart_url)
-                #fi
+                url = "https://xray.fm/api/tracks/current"
+                onair = self.download_url(url, as_text=True)
+                if onair:
+                    data = json.loads(onair)
+                    artist = str(data["artist"])
+                    album = str(data["album"])
+                    song = str(data["title"])
+            
             else:
-                #most internet radios show the artist and album as
-                #artist - album in mpd, so this is a "best guess" for any
-                #station I haven't gotten the stream for.
-                mpdinfo = init()
-                if 'title' in mpdinfo:
-                    info = mpdinfo['title'].split(' - ')
+                # Most internet radios show the artist and album as
+                # artist - album in mpd, so this is a "best guess"
+                mpd_info = MPDInfo(self.config)
+                current = mpd_info.get_current_song()
+                if current and 'title' in current:
+                    info = current['title'].split(' - ')
                     if len(info) == 1:
-                        (artist)=info[0]
+                        artist = info[0]
                     elif len(info) == 2:
-                        (artist,album) = info
+                        artist, album = info
                     elif len(info) == 3:
-                        (artist,album,song) = info
-            #fi
-        except KeyError:
-            pass
-        return([artist, album, song])
+                        artist, album, song = info
+        
+        except Exception as e:
+            self.config.log_error("Error in get_station_info: " + str(e))
+        
+        return [artist, album, song]
+
+
+class TrackInfo:
+    """Handle track information extraction and parsing."""
     
-    def get_coverart_info(data): 
-        nm = prepare_query(data)
-        fname = '{}/{}'.format(coverart_dir,nm)
-        fname = fname + '.jpg'
-        if os.path.isfile(fname):
-            #get_coverart links the file if it's already been dled.
-            get_coverart(fname, '')
-        else:
-            try:
-                dc = discogs_client.Client('mpd_what/2.0', user_token=discogs_token)
-                if len(data) <= 3:
-                    results = dc.search(data[1], artist=data[0], type='release')
-                    url = results.page(1)[0].images[0]['uri']
-                    #with open (errlog, 'a') as logfile:
-                    #    logfile.write(str(url) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
-                elif len(data) == 1:
-                    results = dc.search(data[0], type='release')
-                    url = results.page(1)[0].images[0]['uri']
-                #with open (errlog, 'a') as logfile:
-                #    logfile.write("url: " + url + ' in get_coverart_info() ' + '\n')
-                get_coverart(fname, url)
-            except:
-                try:
-                    get_coverart("generic_lp_icon.jpg", "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/LP_Vinyl_Symbol_Icon.png/240px-LP_Vinyl_Symbol_Icon.png")
-                    exit()
-                    #print('prepare query failed')
-                except OSError as e:
-                    epoch = time()
-                    when = ctime(epoch)
-                    with open (errlog, 'a') as logfile:
-                        logfile.write(str(when) + ': ' + ' in get_coverart_info() ' + str(e) + '\n')
-                    #print("OS error in get_coverart_info: " + e)
-                    exit()
+    def __init__(self, config: Config, cover_art_manager):
+        self.config = config
+        self.cover_art_manager = cover_art_manager
     
-    def get_mpd_info():
-        global showinfo
-        global dl
-        global scrobble
-        global lastfm
-        mpdinfo = init()
-    
-        if 'artist' in mpdinfo:
-            artist = mpdinfo['artist']
-        elif 'name' in mpdinfo:
-            station = mpdinfo['name']
-            whatsplaying = get_station_info(station,dl)
-            artist = whatsplaying[0]
-        elif 'file' in mpdinfo:
-            #if a station doesn't embed a name in the stream, we get get a url as a file
-            if (mpdinfo['file'].startswith("http://") or mpdinfo['file'].startswith("https://")):
-                fqdn = urlparse(mpdinfo['file']).netloc
+    def parse_mpd_info(self, mpd_data: dict, dl: bool = False) -> List[str]:
+        """Extract artist, album, song from MPD data."""
+        # Direct track information
+        if 'artist' in mpd_data:
+            artist = mpd_data['artist']
+            album = mpd_data.get('album', '')
+            song = mpd_data.get('title', '')
+            return [artist, album, song] if album else [artist, song]
+        
+        # Radio station with name
+        if 'name' in mpd_data:
+            station = mpd_data['name']
+            return self.cover_art_manager.get_station_info(station, dl)
+        
+        # Radio station from file URL
+        if 'file' in mpd_data:
+            file_path = mpd_data['file']
+            if file_path.startswith(('http://', 'https://')):
+                # Extract domain name from URL
+                fqdn = urlparse(file_path).netloc
                 dn = ('.'.join(fqdn.split('.')[-2:]))
-                #sometimes (perhaps, often), the url includes a port number. We don't want that.
+                # sometimes (perhaps, often), the url includes a port number. We don't want that.
                 dn = (dn.split(':')[0:])[0]
-                whatsplaying = get_station_info(dn,dl)
-                artist = whatsplaying[0]
+                return self.cover_art_manager.get_station_info(dn, dl)
             else:
-                whatsplaying = mpdinfo['file'].split('/')
-                artist = whatsplaying[0]
-                album = whatsplaying[1]
-                song = whatsplaying[2]
-        #fi
-        #The , '' means, if album isn't there, use null instead of erroring out.
-        if 'whatsplaying' in vars():
-            pass
-        else:
-            album = mpdinfo.get('album', '')
-            song = mpdinfo.get('title', '')
-            whatsplaying = [artist, album, song]
-
-        #why is this needed? because whatsplaying, which should be
-        #a list of strings, might contain an empty string as one of its
-        #entries, and that messes up the logic.
-        if isinstance(whatsplaying, list):
-            whatsplaying = [s for s in whatsplaying if s != '']
-
-        infostr = '\n'.join(whatsplaying).strip()
-
-        last = ""
-
-        if os.path.exists(lastplayed):
-            with open(lastplayed, 'r') as lastfile:
-                last = lastfile.readlines()
-                last = ''.join(last).strip()
-
-        if fdl:
-            get_coverart_info(whatsplaying)
-        else:
-            if (infostr != last):
-                if dl:
-                    get_coverart_info(whatsplaying)
-                if (len(whatsplaying) >= 2):
-                    if (len(whatsplaying) == 3):
-                        artist = whatsplaying[0]
-                        album = whatsplaying[1]
-                        title = whatsplaying[2]
-                        #print(whatsplaying)
-                    elif (len(whatsplaying) == 2):
-                        artist = whatsplaying[0]
-                        album = ""
-                        title = whatsplaying[1]
-                    artist = str(artist)
-                    album = str(album)
-                    title = str(title)
-
-                    if not ("http" in artist):
-                        with open(lastplayed, 'w+') as lastfile:
-                            lastfile.write(infostr)
-
-                        oneline_infostr = infostr.replace('\n', ';')
-
-                        with open(playlist, 'a') as p:
-                            epoch = time()
-                            today_date = ctime(epoch)
-                            p.write(today_date + ': ' + oneline_infostr + '\n')
-
-                        if ((lastfm_user, lastfm_pass, lastfm_api_key, lastfm_api_secret) != ("", "", "", "")) and scrobble and lastfm:
-
-                            epoch = time()
-                            when = ctime(epoch)
-                            try:
-                                with open (errlog, 'a') as logfile:
-                                    lastfm = pylast.LastFMNetwork(api_key=lastfm_api_key,
-                                                                  api_secret=lastfm_api_secret,
-                                                                  username=lastfm_user,
-                                                                  password_hash=pylast.md5(lastfm_pass))
-                                    librefm = pylast.LibreFMNetwork(api_key=lastfm_api_key,
-                                                                  api_secret=lastfm_api_secret,
-                                                                  username=librefm_user,
-                                                                  password_hash=pylast.md5(librefm_pass))
-                                    if album == "":
-                                        lastfm.scrobble(artist=artist, title=title, timestamp=epoch)
-                                        librefm.scrobble(artist=artist, title=title, timestamp=epoch)
-                                    else:
-                                        lastfm.scrobble(artist=artist, album=album, title=title, timestamp=epoch)
-                                        librefm.scrobble(artist=artist, album=album, title=title, timestamp=epoch)
-
-                            except Exception as e:
-                                with open (errlog, 'a') as logfile:
-                                    logfile.write("problem scrobbling: " + str(when) + ': ' + str(e) + '\n')
-                                    logfile.write(artist + '\n')
-                                    logfile.write(album + '\n')
-                                    logfile.write(title + '\n')
-                            
-
-            if showinfo: 
-                print(infostr)
-            #fi
-
-    def verify_args(a, gs):
-        a = [s.lower() for s in a]
-        #now we see if the user entered invalid args
-        if len(a) > 1:
-            for arg in a[1:]:
-                if arg in gs:
-                    pass
-                else:
-                    help_msg(a[0])
-                    exit(0)
+                # Local file path
+                parts = file_path.split('/')
+                if len(parts) >= 3:
+                    return parts[:3]
+                return parts
+        
+        return []
     
-    def parse_args(a):
-        valid_singles = ['-g', '--get',  '-sc', '--scrobble', '-h', '--help', '-q', '--quiet', '--force-download']
-        verify_args(a, valid_singles)
-        global dl, scrobble, showinfo
-        if '-h' in a[1:] or '--help' in a[1:]:
-            help_msg(a[0])
-            exit(0)
-        if '-g' in a[1:] or '--get' in a[1:] :
-            dl=True
-        if '--force-download' in a[1:] :
-            fdl=True
-        if '-q' in a[1:] or '--quiet' in a[1:]:
-            showinfo=False
-        if '-sc' in a[1:] or '--scrobble' in a[1:]:
-            scrobble=True
+    @staticmethod
+    def _parse_station_title(title: str) -> List[str]:
+        """Parse radio station title into artist/album/song."""
+        if not title:
+            return []
+        
+        parts = title.split(' - ')
+        return [p.strip() for p in parts if p.strip()]
+
+
+class Scrobbler:
+    """Handle Last.fm and Libre.fm scrobbling."""
     
-parse_args(argv)
-get_mpd_info()
+    def __init__(self, config: Config):
+        self.config = config
+        self.lastfm_network = None
+        self.librefm_network = None
+        
+        if not LASTFM_AVAILABLE:
+            return
+        
+        # Initialize networks if credentials are provided
+        if all([config.lastfm_user, config.lastfm_pass, 
+                config.lastfm_api_key, config.lastfm_api_secret]):
+            try:
+                self.lastfm_network = pylast.LastFMNetwork(
+                    api_key=config.lastfm_api_key,
+                    api_secret=config.lastfm_api_secret,
+                    username=config.lastfm_user,
+                    password_hash=pylast.md5(config.lastfm_pass)
+                )
+            except Exception as e:
+                config.log_error("Error initializing Last.fm: " + str(e))
+        
+        if all([config.librefm_user, config.librefm_pass,
+                config.lastfm_api_key, config.lastfm_api_secret]):
+            try:
+                self.librefm_network = pylast.LibreFMNetwork(
+                    api_key=config.lastfm_api_key,
+                    api_secret=config.lastfm_api_secret,
+                    username=config.librefm_user,
+                    password_hash=pylast.md5(config.librefm_pass)
+                )
+            except Exception as e:
+                config.log_error("Error initializing Libre.fm: " + str(e))
+    
+    def scrobble(self, artist: str, title: str, album: str = "") -> None:
+        """Scrobble track to Last.fm and Libre.fm."""
+        if not LASTFM_AVAILABLE:
+            return
+        
+        timestamp = int(time())
+        
+        for network, name in [(self.lastfm_network, "Last.fm"), 
+                               (self.librefm_network, "Libre.fm")]:
+            if network:
+                try:
+                    if album:
+                        network.scrobble(
+                            artist=artist,
+                            album=album,
+                            title=title,
+                            timestamp=timestamp
+                        )
+                    else:
+                        network.scrobble(
+                            artist=artist,
+                            title=title,
+                            timestamp=timestamp
+                        )
+                except Exception as e:
+                    self.config.log_error(
+                        "Error scrobbling to " + name + ": " + str(e) + "\n" +
+                        "Artist: " + artist + ", Album: " + album + ", Title: " + title
+                    )
+
+
+class MPDWhat:
+    """Main application controller."""
+    
+    def __init__(self, config: Config):
+        self.config = config
+        self.mpd_info = MPDInfo(config)
+        self.cover_art = CoverArtManager(config)
+        self.track_info = TrackInfo(config, self.cover_art)
+        self.scrobbler = Scrobbler(config)
+    
+    def get_last_played(self) -> str:
+        """Read last played track info."""
+        if self.config.lastplayed_file.exists():
+            try:
+                return self.config.lastplayed_file.read_text().strip()
+            except Exception:
+                return ""
+        return ""
+    
+    def save_last_played(self, info: str) -> None:
+        """Save currently playing track info."""
+        try:
+            self.config.lastplayed_file.parent.mkdir(parents=True, exist_ok=True)
+            self.config.lastplayed_file.write_text(info)
+        except Exception as e:
+            self.config.log_error("Error saving last played: " + str(e))
+    
+    def save_to_playlist(self, info: str) -> None:
+        """Append track to playlist history."""
+        try:
+            self.config.playlist_file.parent.mkdir(parents=True, exist_ok=True)
+            timestamp = ctime(time())
+            oneline_info = info.replace('\n', ';')
+            
+            with open(self.config.playlist_file, 'a') as f:
+                f.write(timestamp + ': ' + oneline_info + '\n')
+        except Exception as e:
+            self.config.log_error("Error saving to playlist: " + str(e))
+    
+    def run(self) -> None:
+        """Main execution loop."""
+        current_song = self.mpd_info.get_current_song()
+        
+        if not current_song:
+            return
+        
+        # Parse track information
+        track_parts = self.track_info.parse_mpd_info(current_song, self.config.download)
+        
+        # Filter empty strings
+        track_parts = [p for p in track_parts if p]
+        
+        if not track_parts:
+            return
+        
+        info_string = '\n'.join(track_parts)
+        last_played = self.get_last_played()
+        
+        # Handle forced download
+        if self.config.force_download:
+            self.cover_art.fetch_from_discogs(track_parts)
+            return
+        
+        # Check if track has changed
+        if info_string == last_played:
+            if self.config.showinfo:
+                print(info_string)
+            return
+        
+        # Download cover art if requested
+        if self.config.download:
+            self.cover_art.fetch_from_discogs(track_parts)
+        
+        # Process track change
+        if len(track_parts) >= 2:
+            artist = track_parts[0]
+            album = track_parts[1] if len(track_parts) >= 3 else ""
+            title = track_parts[-1]
+            
+            # Don't save if it's a URL (streaming)
+            if "http" not in artist:
+                self.save_last_played(info_string)
+                self.save_to_playlist(info_string)
+                
+                # Scrobble if enabled
+                if self.config.scrobble:
+                    self.scrobbler.scrobble(artist, title, album)
+        
+        # Display info
+        if self.config.showinfo:
+            print(info_string)
+
+
+def print_help(program_name: str) -> None:
+    """Print help message."""
+    print("usage:\n" +
+          "    " + program_name + " -sc  or --scrobble to try to scrobble music to last.fm or libre.fm\n" +
+          "    " + program_name + " -g   or --get to download album art\n" +
+          "    " + program_name + " -q   or --quiet to not print info\n" +
+          "    " + program_name + " --force-download to force re-download of cover art\n" +
+          "    \n" +
+          "arguments can be composed, e.g.:\n" +
+          "    " + program_name + " -sc -g -q")
+
+
+def parse_arguments(args: List[str]) -> Config:
+    """Parse command line arguments and update config."""
+    config = Config.load()
+    
+    valid_args = {'-g', '--get', '-sc', '--scrobble', '-h', '--help', 
+                  '-q', '--quiet', '--force-download'}
+    
+    # Validate arguments
+    for arg in args[1:]:
+        if arg.lower() not in valid_args:
+            print_help(args[0])
+            exit(1)
+    
+    # Process arguments
+    if '-h' in args or '--help' in args:
+        print_help(args[0])
+        exit(0)
+    
+    if '-g' in args or '--get' in args:
+        config.download = True
+    
+    if '--force-download' in args:
+        config.force_download = True
+    
+    if '-q' in args or '--quiet' in args:
+        config.showinfo = False
+    
+    if '-sc' in args or '--scrobble' in args:
+        config.scrobble = True
+    
+    return config
+
+
+def main():
+    """Main entry point."""
+    config = parse_arguments(argv)
+    app = MPDWhat(config)
+    app.run()
+
+
+if __name__ == '__main__':
+    main()
